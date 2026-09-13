@@ -196,8 +196,9 @@ void *Sys_open(const char *name, bool read_only)
 
 			// Detect disk image file layout
 			UQUAD size = FIB.fib_Size64;
+			memset(tmp_buf, 0, 256);
 			Seek(fh->f, 0, OFFSET_BEGINNING);
-			Read(fh->f, &tmp_buf, 256);
+			Read(fh->f, tmp_buf, 256);
 			FileDiskLayout(size, tmp_buf, fh->start_byte, fh->size);
 		}
 		return fh;
@@ -207,7 +208,14 @@ void *Sys_open(const char *name, bool read_only)
 		// Device, parse string
 		char dev_name[256];
 		ULONG dev_unit = 0, dev_flags = 0, dev_start = 0, dev_size = 16, dev_bsize = 512;
-		if (sscanf(name, "/dev/%[^/]/%ld/%ld/%ld/%ld/%ld", dev_name, &dev_unit, &dev_flags, &dev_start, &dev_size, &dev_bsize) < 2)
+		if (sscanf(name, "/dev/%255[^/]/%lu/%lu/%lu/%lu/%lu", dev_name, &dev_unit, &dev_flags, &dev_start, &dev_size, &dev_bsize) < 2)
+			return NULL;
+
+		// Partial block I/O uses tmp_buf, so reject unsafe/invalid block sizes.
+		if (dev_bsize == 0 || dev_bsize > sizeof(tmp_buf) || (dev_bsize & (dev_bsize - 1)) != 0)
+			return NULL;
+
+		if (the_port == NULL)
 			return NULL;
 
 		// Create IORequest
@@ -297,8 +305,16 @@ static UQUAD send_io_request(file_handle *fh, bool writing, ULONG length, UQUAD 
 size_t Sys_read(void *arg, void *buffer, loff_t offset, size_t length)
 {
 	file_handle *fh = (file_handle *)arg;
-	if (!fh)
+	if (!fh || !buffer || length == 0)
 		return 0;
+
+	// Never read beyond the selected image/partition.
+	UQUAD uoffset = (UQUAD)offset;
+	if (uoffset >= fh->size)
+		return 0;
+	UQUAD remaining = fh->size - uoffset;
+	if ((UQUAD)length > remaining)
+		length = (size_t)remaining;
 
 	// File or device?
 	if (fh->is_file) {
@@ -338,7 +354,7 @@ size_t Sys_read(void *arg, void *buffer, loff_t offset, size_t length)
 			size_t pre_length = fh->block_size - pre_offset;
 			if (pre_length > length)
 				pre_length = length;
-			memcpy(buffer, &tmp_buf + pre_offset, pre_length);
+			memcpy(buffer, tmp_buf + pre_offset, pre_length);
 
 			// Adjust data pointers
 			buffer = (uint8 *)buffer + pre_length;
@@ -387,8 +403,16 @@ size_t Sys_read(void *arg, void *buffer, loff_t offset, size_t length)
 size_t Sys_write(void *arg, void *buffer, loff_t offset, size_t length)
 {
 	file_handle *fh = (file_handle *)arg;
-	if (!fh)
+	if (!fh || !buffer || fh->read_only || length == 0)
 		return 0;
+
+	// Never write beyond the selected image/partition.
+	UQUAD uoffset = (UQUAD)offset;
+	if (uoffset >= fh->size)
+		return 0;
+	UQUAD remaining = fh->size - uoffset;
+	if ((UQUAD)length > remaining)
+		length = (size_t)remaining;
 
 	// File or device?
 	if (fh->is_file) {
@@ -428,7 +452,7 @@ size_t Sys_write(void *arg, void *buffer, loff_t offset, size_t length)
 			size_t pre_length = fh->block_size - pre_offset;
 			if (pre_length > length)
 				pre_length = length;
-			memcpy(&tmp_buf + pre_offset, buffer, pre_length);
+			memcpy(tmp_buf + pre_offset, buffer, pre_length);
 
 			// Write block back
 			if (send_io_request(fh, true, fh->block_size, pos - pre_offset, &tmp_buf) == 0)
@@ -464,7 +488,7 @@ size_t Sys_write(void *arg, void *buffer, loff_t offset, size_t length)
 				return 0;
 
 			// Copy data from source buffer
-			memcpy(buffer, &tmp_buf, length);
+			memcpy(tmp_buf, buffer, length);
 
 			// Write block back
 			if (send_io_request(fh, true, fh->block_size, pos, &tmp_buf) == 0)
@@ -485,7 +509,7 @@ loff_t SysGetFileSize(void *arg)
 {
 	file_handle *fh = (file_handle *)arg;
 	if (!fh)
-		return true;
+		return 0;
 
 	return fh->size;
 }

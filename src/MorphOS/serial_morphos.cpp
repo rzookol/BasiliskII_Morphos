@@ -74,6 +74,7 @@ public:
 			is_parallel = false;
 		control_io = NULL;
 		serial_proc = NULL;
+		proc_port = NULL;
 		reply_port = NULL;
 	}
 
@@ -138,6 +139,8 @@ void SerialExit(void)
 {
 	delete (ASERDPort *)the_serd_port[0];
 	delete (ASERDPort *)the_serd_port[1];
+	the_serd_port[0] = NULL;
+	the_serd_port[1] = NULL;
 }
 
 
@@ -643,6 +646,8 @@ void ASERDPort::serial_func(ASERDPort *proc_arg)
 	obj->proc_error = true;
 
 	NewGetTaskAttrs(NULL, &proc_port, sizeof(struct MsgPort *), TASKINFOTYPE_TASKMSGPORT, TAG_DONE);
+	if (proc_port == NULL)
+		goto quit;
 	proc_port_mask = 1 << proc_port->mp_SigBit;
 
 	// Create message ports for serial.device I/O
@@ -667,7 +672,7 @@ void ASERDPort::serial_func(ASERDPort *proc_arg)
 	// Parse device name
 	char dev_name[256];
 	ULONG dev_unit;
-	if (sscanf(obj->device_name, "%[^/]/%ld", dev_name, &dev_unit) < 2)
+	if (sscanf(obj->device_name, "%255[^/]/%lu", dev_name, &dev_unit) < 2)
 		goto quit;
 
 	// Open device
@@ -759,10 +764,16 @@ void ASERDPort::serial_func(ASERDPort *proc_arg)
 						break;
 
 					case MSG_KILL_IO:
-						AbortIO((struct IORequest *)read_io);
-						AbortIO((struct IORequest *)write_io);
-						WaitIO((struct IORequest *)read_io);
-						WaitIO((struct IORequest *)write_io);
+						if (obj->read_pending) {
+							if (CheckIO((struct IORequest *)read_io) == 0)
+								AbortIO((struct IORequest *)read_io);
+							WaitIO((struct IORequest *)read_io);
+						}
+						if (obj->write_pending) {
+							if (CheckIO((struct IORequest *)write_io) == 0)
+								AbortIO((struct IORequest *)write_io);
+							WaitIO((struct IORequest *)write_io);
+						}
 						obj->read_pending = obj->write_pending = false;
 						obj->read_done = obj->write_done = false;
 						break;
@@ -850,9 +861,16 @@ quit:
 		CloseDevice((struct IORequest *)read_io);
 	}
 
-	DeleteIORequest(control_io);
-	DeleteIORequest(write_io);
-	DeleteIORequest(read_io);
-	DeleteMsgPort(control_port);
-	DeleteMsgPort(io_port);
+	if (control_io)
+		DeleteIORequest(control_io);
+	if (write_io)
+		DeleteIORequest(write_io);
+	if (read_io)
+		DeleteIORequest(read_io);
+	if (control_port)
+		DeleteMsgPort(control_port);
+	if (io_port)
+		DeleteMsgPort(io_port);
+	obj->control_io = NULL;
+	obj->proc_port = NULL;
 }

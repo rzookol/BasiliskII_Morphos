@@ -36,7 +36,7 @@
 static struct SCSICmd scsi;
 
 static IOStdReq *ios[8*8];			// IORequests for 8 units and 8 LUNs each
-static IOStdReq *io;					// Active IORequest (selected target)
+static IOStdReq *io = NULL;			// Active IORequest (selected target)
 
 static struct MsgPort *the_port = NULL;	// Message port for device communication
 
@@ -62,44 +62,52 @@ void SCSIInit(void)
 	buffer = (UBYTE *)AllocTaskPooled(buffer_size);
 	if (the_port == NULL || buffer == NULL)
 	{
+		if (buffer) {
+			FreeTaskPooled(buffer, buffer_size);
+			buffer = NULL;
+		}
+		if (the_port) {
+			DeleteMsgPort(the_port);
+			the_port = NULL;
+		}
 		ErrorAlert(GetString(STR_NO_MEM_ERR));
 		QuitEmulator();
+		return;
 	}
 
 	memset(ios, 0, sizeof(ios));
+	memset(&scsi, 0, sizeof(scsi));
+	memset(cmd_buffer, 0, sizeof(cmd_buffer));
+	memset(sense_buffer, 0, sizeof(sense_buffer));
+	io = NULL;
 
 	// Create and open IORequests for all 8 units (and all 8 LUNs)
 	for (id=0; id<8; id++)
 	{
 		char prefs_name[16];
-		sprintf(prefs_name, "scsi%d", id);
+		snprintf(prefs_name, sizeof(prefs_name), "scsi%d", id);
 		const char *str = PrefsFindString(prefs_name);
 		if (str)
 		{
 			char dev_name[256];
 			ULONG dev_unit = 0;
-			if (sscanf(str, "%[^/]/%ld", dev_name, &dev_unit) == 2)
+			if (sscanf(str, "%255[^/]/%lu", dev_name, &dev_unit) == 2)
 			{
 				for (lun=0; lun<8; lun++)
 				{
-					struct IOStdReq *io = (struct IOStdReq *)AllocTaskPooled(sizeof(struct IOStdReq));
+					struct IOStdReq *req = (struct IOStdReq *)CreateIORequest(the_port, sizeof(struct IOStdReq));
 
-					if (io == NULL)
+					if (req == NULL)
 						continue;
 
-					io->io_Message.mn_Node.ln_Name	= NULL;
-					io->io_Message.mn_Node.ln_Pri		= 0;
-					io->io_Message.mn_ReplyPort		= the_port;
-					io->io_Message.mn_Length			= sizeof(*io);
-
-					if (OpenDevice(dev_name, dev_unit + lun * 10, (struct IORequest *)io, 0)) {
-						DeleteIORequest(io);
+					if (OpenDevice(dev_name, dev_unit + lun * 10, (struct IORequest *)req, 0)) {
+						DeleteIORequest(req);
 						continue;
 					}
-					io->io_Data = &scsi;
-					io->io_Length = sizeof(scsi);
-					io->io_Command = HD_SCSICMD;
-					ios[id*8+lun] = io;
+					req->io_Data = &scsi;
+					req->io_Length = sizeof(scsi);
+					req->io_Command = HD_SCSICMD;
+					ios[id*8+lun] = req;
 				}
 			}
 		}
@@ -109,7 +117,6 @@ void SCSIInit(void)
 	SCSIReset();
 
 	// Init SCSICmd
-	memset(&scsi, 0, sizeof(scsi));
 	scsi.scsi_Command = cmd_buffer;
 	scsi.scsi_SenseData = sense_buffer;
 	scsi.scsi_SenseLength = SENSE_LENGTH;
@@ -129,13 +136,21 @@ void SCSIExit(void)
 			if (io)
 			{
 				CloseDevice((struct IORequest *)io);
+				DeleteIORequest(io);
+				ios[i*8+j] = NULL;
 			}
 		}
 
 	// Delete port and buffers
-	DeleteMsgPort(the_port);
-	if (buffer)
+	if (the_port) {
+		DeleteMsgPort(the_port);
+		the_port = NULL;
+	}
+	if (buffer) {
 		FreeTaskPooled(buffer, buffer_size);
+		buffer = NULL;
+	}
+	io = NULL;
 }
 
 
@@ -143,17 +158,20 @@ void SCSIExit(void)
  *  Check if requested data size fits into buffer, allocate new buffer if needed
  */
 
-static bool try_buffer(int size)
+static bool try_buffer(size_t size)
 {
-	if (size <= (int)buffer_size)
+	if (size <= buffer_size)
 		return true;
 
-	UBYTE *new_buffer = (UBYTE *)AllocTaskPooled(size);
+	if (size > 0xffffffffUL)
+		return false;
+
+	UBYTE *new_buffer = (UBYTE *)AllocTaskPooled((ULONG)size);
 	if (new_buffer == NULL)
 		return false;
 	FreeTaskPooled(buffer, buffer_size);
 	buffer = new_buffer;
-	buffer_size = size;
+	buffer_size = (ULONG)size;
 	return true;
 }
 
@@ -164,6 +182,12 @@ static bool try_buffer(int size)
 
 void scsi_set_cmd(int cmd_length, uint8 *cmd)
 {
+	if (cmd == NULL || cmd_length <= 0 || cmd_length > (int)sizeof(cmd_buffer)) {
+		scsi.scsi_CmdLength = 0;
+		memset(cmd_buffer, 0, sizeof(cmd_buffer));
+		return;
+	}
+
 	scsi.scsi_CmdLength = cmd_length;
 	memcpy(cmd_buffer, cmd, cmd_length);
 }
@@ -175,7 +199,7 @@ void scsi_set_cmd(int cmd_length, uint8 *cmd)
 
 bool scsi_is_target_present(int id)
 {
-	return ios[id * 8] != NULL;
+	return id >= 0 && id < 8 && ios[id * 8] != NULL;
 }
 
 
@@ -185,6 +209,9 @@ bool scsi_is_target_present(int id)
 
 bool scsi_set_target(int id, int lun)
 {
+	if (id < 0 || id >= 8 || lun < 0 || lun >= 8)
+		return false;
+
 	struct IOStdReq *new_io = ios[id * 8 + lun];
 	if (new_io == NULL)
 		return false;
@@ -202,10 +229,26 @@ bool scsi_set_target(int id, int lun)
 
 bool scsi_send_cmd(size_t data_length, bool reading, int sg_size, uint8 **sg_ptr, uint32 *sg_len, uint16 *stat, uint32 timeout)
 {
+	if (io == NULL || stat == NULL || scsi.scsi_CmdLength == 0 ||
+	    sg_size < 0 || (sg_size > 0 && (sg_ptr == NULL || sg_len == NULL)))
+		return false;
+
+	// Validate the scatter/gather table before touching the shared buffer.
+	size_t sg_total = 0;
+	for (int i = 0; i < sg_size; i++) {
+		if (sg_ptr[i] == NULL && sg_len[i] != 0)
+			return false;
+		if ((size_t)sg_len[i] > data_length - sg_total)
+			return false;
+		sg_total += sg_len[i];
+	}
+	if (sg_total != data_length)
+		return false;
+
 	// Check if buffer is large enough, allocate new buffer if needed
 	if (!try_buffer(data_length)) {
 		char str[256];
-		sprintf(str, GetString(STR_SCSI_BUFFER_ERR), data_length);
+		snprintf(str, sizeof(str), GetString(STR_SCSI_BUFFER_ERR), (ULONG)data_length);
 		ErrorAlert(str);
 		return false;
 	}
@@ -228,8 +271,14 @@ bool scsi_send_cmd(size_t data_length, bool reading, int sg_size, uint8 **sg_ptr
 
 		// Yes, fake command
 		D(bug(" autosense\n"));
-		memcpy(buffer, &sense_buffer, scsi.scsi_SenseActual);
+		size_t sense_len = scsi.scsi_SenseActual;
+		if (sense_len > data_length)
+			sense_len = data_length;
+		memcpy(buffer, sense_buffer, sense_len);
+		if (sense_len < data_length)
+			memset(buffer + sense_len, 0, data_length - sense_len);
 		scsi.scsi_Status = 0;
+		*stat = 0;
 
 	} else {
 

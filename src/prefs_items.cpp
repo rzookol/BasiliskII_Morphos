@@ -51,13 +51,21 @@ const prefs_desc common_prefs_items[] = {
 	{"modelid", TYPE_INT32, false,    "Mac Model ID (Gestalt Model ID minus 6)"},
 	{"cpu", TYPE_INT32, false,        "CPU type (0 = 68000, 1 = 68010 etc.)"},
 	{"fpu", TYPE_BOOLEAN, false,      "enable FPU emulation"},
+	{"keyboardtype", TYPE_INT32, false, "hardware keyboard type"},
 	{"nocdrom", TYPE_BOOLEAN, false,  "don't install CD-ROM driver"},
 	{"nosound", TYPE_BOOLEAN, false,  "don't enable sound output"},
 	{"noclipconversion", TYPE_BOOLEAN, false, "don't convert clipboard contents"},
 	{"nogui", TYPE_BOOLEAN, false,    "disable GUI"},
+	{"idlewait", TYPE_BOOLEAN, false,  "sleep when guest is idle"},
 #ifdef __MORPHOS__
 	{"fullscreen", TYPE_BOOLEAN, TRUE,	"fullscreen"},
-	{"8bitgfx", TYPE_BOOLEAN, TRUE,		"8bit colours"},
+	{"8bitgfx", TYPE_BOOLEAN, TRUE,		"8bit colours (legacy initial-depth preference)"},
+	{"gfxdepth", TYPE_INT32, false,		"initial Mac display depth (8, 16 or 32 bit)"},
+	{"gfxaccel", TYPE_BOOLEAN, false,	"accelerated dirty-rectangle screen refresh"},
+	{"rgb24overlay", TYPE_BOOLEAN, false,	"CGXVideo RGB16PC overlay output"},
+	{"hardwarecursor", TYPE_BOOLEAN, false,	"Intuition ARGB hardware cursor"},
+	{"altivecgfx", TYPE_BOOLEAN, false,	"AltiVec graphics conversion acceleration"},
+	{"morphosgamma", TYPE_BOOLEAN, false,	"legacy MorphOS gamma preference (ignored; fullscreen always uses system gamma)"},
 #endif
 	{NULL, TYPE_END, false, NULL} // End of list
 };
@@ -77,8 +85,21 @@ void AddPrefsDefaults(void)
 	PrefsAddInt32("modelid", 5);	// Mac IIci
 	PrefsAddInt32("cpu", 3);		// 68030
 	PrefsAddBool("fpu", false);
+	PrefsAddInt32("keyboardtype", 5);
 	PrefsAddBool("nocdrom", false);
 	PrefsAddBool("nosound", false);
 	PrefsAddBool("noclipconversion", false);
 	PrefsAddBool("nogui", false);
+#ifdef __MORPHOS__
+	PrefsAddBool("idlewait", true);
+#else
+	PrefsAddBool("idlewait", false);
+#endif
+#ifdef __MORPHOS__
+	PrefsAddInt32("gfxdepth", 32);
+	PrefsAddBool("gfxaccel", true);
+	PrefsAddBool("rgb24overlay", false);
+	PrefsAddBool("hardwarecursor", true);
+	PrefsAddBool("altivecgfx", true);
+#endif
 }

@@ -92,8 +92,15 @@ void ClipInit(void)
 
 void ClipExit(void)
 {
-	CloseClipboard(ch);
-	FreeIFF(iffw);
+	if (ch) {
+		CloseClipboard(ch);
+		ch = NULL;
+	}
+	if (iffw) {
+		FreeIFF(iffw);
+		iffw = NULL;
+	}
+	clipboard_open = false;
 }
 
 
@@ -104,7 +111,7 @@ void ClipExit(void)
 void PutScrap(uint32 type, void *scrap, int32 length)
 {
 	D(bug("PutScrap type %08lx, data %08lx, length %ld\n", type, scrap, length));
-	if (length <= 0 || !clipboard_open)
+	if (length <= 0 || scrap == NULL || !clipboard_open)
 		return;
 
 	switch (type)
@@ -119,6 +126,11 @@ void PutScrap(uint32 type, void *scrap, int32 length)
 
 			// Convert text from Mac charset to ISO-Latin1
 			uint8 *buf = (uint8 *)AllocTaskPooled(length);
+			if (!buf) {
+				CloseIFF(iffw);
+				break;
+			}
+
 			uint8 *p = (uint8 *)scrap;
 			uint8 *q = buf;
 			for (int i=0; i<length; i++) {
@@ -143,7 +155,7 @@ void PutScrap(uint32 type, void *scrap, int32 length)
 			{
 				if (!PushChunk(iffw, 0, MAKE_ID('C','H','R','S'), IFFSIZE_UNKNOWN))
 				{
-					WriteChunkBytes(iffw, scrap, length);
+					WriteChunkBytes(iffw, buf, length);
 					PopChunk(iffw);
 				}
 				PopChunk(iffw);

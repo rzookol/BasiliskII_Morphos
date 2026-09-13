@@ -1,9 +1,9 @@
 Short:        Source code to 68k Macintosh Emulator for MorphOS
-Author:       Christian Bauer, Ilkka Lehtoranta (ilkleht@isoveli.org)
-Uploader:     Ilkka Lehtoranta (ilkleht@isoveli.org) 
-Version:      1.2
-Type:         dev/c
-Architecture: generic
+Author:       Christian Bauer, Ilkka Lehtoranta (ilkleht@isoveli.org), Michal Zukowski
+Uploader:     Michal Zukowski (rzookol at poczta.onet.pl) 
+Version:      1.3
+Type:         misc/emu
+Architecture: ppc-morphos
 
 Basilisk II is an open source 68k Macintosh emulator. It can emulate
 either a Mac Classic or a Mac II series machine with colour display
@@ -23,6 +23,29 @@ Note to PowerUp users: it is probably better run Shapeshifter or Fusion on
 the 68k than Basilisk II on the PPC. Basilisk II uses UAE CPU engine and
 BPPC/CSPPC is too weak.
 
+
+Changes in Basilisk II 1.3 MorphOS version
+
+ * Added Polish locale
+ * Fixes for newer GCC
+ * Fixed partial-block disk I/O memory corruption and wrong post-write memcpy direction
+ * Added image/partition I/O bounds checks and safer device preference parsing
+ * Fixed RDB partition scanning, allocation, linked-list traversal and block offsets/sizes
+ * Hardened SCSI request allocation, target/LUN/command bounds and scatter/gather handling
+ * Fixed clipboard TEXT output to write the converted buffer
+ * Hardened AHI request initialization, buffer sizing and shutdown
+ * Hardened serial device parsing, KillIO and partial initialization cleanup
+ * CGXVideo hardware overlay support
+ * Added support for hardware mouse pointer
+ * Fast screen updates
+ * Disk access beyond 4 GiB is fixed 
+ * CD-ROM status compatibility was improved
+ * The ADB keyboard type now has a proper default value.
+ * New idlewait support reduces host CPU usage while Mac OS is idle.
+ * ADB mouse button events are buffered so very fast clicks/taps are not lost.
+ * ExtFS host modification dates fixes
+ * Altivec support
+ * Ability to change screen depth in MacOS
 
 Changes in Basilisk II 1.2 MorphOS version
  * Added support for 64bit DOS (MorphOS 2 required)

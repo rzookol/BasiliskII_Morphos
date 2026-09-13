@@ -290,7 +290,7 @@ Q\0Verlassen
 ; 
 ;
 MSG_AUTHOR_INFORMATION
-\33cBasilisk II 1.0 von Christian Bauer\n© Copyright 1997-2001\nVerbreitung gem‰ﬂ der General Public License (GPL)
+\33cBasilisk II 1.3 von Christian Bauer\n© Copyright 1997-2001\nVerbreitung gem‰ﬂ der General Public License (GPL)
 ; 
 ;
 MSG_PORT_INFORMATION
@@ -304,4 +304,8 @@ Basilisk Piktogramme von Christian Rosentereter
 MSG_DESCRIPTION
 68k MacIntosh Emulator
 ; 
+;
+MSG_PREFS_CPU_FPU_GAD
+CPU / FPU
+; CPU / FPU
 ;

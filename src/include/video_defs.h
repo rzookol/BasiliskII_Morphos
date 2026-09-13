@@ -91,6 +91,21 @@ enum {	// VDSetEntry struct
 	csCount = 6
 };
 
+enum {	// VDGammaRecord
+	csGTable = 0
+};
+
+enum {	// struct GammaTbl
+	gVersion = 0,
+	gType = 2,
+	gFormulaSize = 4,
+	gChanCnt = 6,
+	gDataCnt = 8,
+	gDataWidth = 10,
+	gFormulaData = 12,
+	SIZEOF_GammaTbl = 12
+};
+
 enum {	// VDDisplayConnectInfo struct
 	csDisplayType = 0,
 	csConnectTaggedType = 2,
@@ -108,6 +123,30 @@ enum {	// VDTimingInfo struct
 	csTimingFlags = 16
 };
 
+enum {	// VDVideoParametersInfo struct
+	csDisplayModeID = 0,
+	csDepthMode = 4,
+	csVPBlockPtr = 6,
+	csPageCount = 10,
+	csDeviceType = 14
+};
+
+enum {	// VPBlock struct
+	vpBaseOffset = 0,
+	vpRowBytes = 4,
+	vpBounds = 6,
+	vpVersion = 14,
+	vpPackType = 16,
+	vpPackSize = 18,
+	vpHRes = 22,
+	vpVRes = 26,
+	vpPixelType = 30,
+	vpPixelSize = 32,
+	vpCmpCount = 34,
+	vpCmpSize = 36,
+	vpPlaneBytes = 38
+};
+
 enum {	// VDPageInfo struct
 	csPageMode = 0,
 	csPageData = 2,
@@ -115,5 +154,21 @@ enum {	// VDPageInfo struct
 	csPageBaseAddr = 8
 
 };
+
+#ifdef __MORPHOS__
+enum { // VDDrawHardwareCursor / VDHardwareCursorDrawState
+	csCursorX = 0,
+	csCursorY = 4,
+	csCursorVisible = 8,
+	csCursorSet = 12
+};
+
+enum { // CursorImage
+	ciMajorVersion = 0,
+	ciMinorVersion = 2,
+	ciCursorPixMap = 4,
+	ciCursorBitMask = 8
+};
+#endif
 
 #endif

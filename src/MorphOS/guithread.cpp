@@ -93,6 +93,7 @@ static ULONG App_AboutBasilisk(struct IClass *cl, Object *obj)
 			"\n\tChristian Bauer"
 			"\n\033b%P\033n"             /* additional programming */
 			"\n\tIlkka Lehtoranta"
+			"\n\tMichal Zukowski"
 			"\n\033b%i\033n"             /* icons */
 			"\n\tChristian Rosentreter"
 			"\n\033b%§\033n"             /* license */
@@ -184,19 +185,33 @@ static struct EmulLibEntry ApplicationTrap = {TRAP_LIB, 0, (void (*)())&AppDispa
 static struct MUI_CustomClass *CL_App;
 struct MUI_CustomClass	*CL_Display;
 extern struct EmulLibEntry DisplayTrap;
+extern ULONG DisplayDataSize(void);
+extern void VideoPrepareGUIShutdown(void);
 
 static void FinishThread(void)
 {
-	MUI_DisposeObject(app);
+	if (app) {
+		/* Close the video window first.  This makes its MUIM_Hide/cursor cleanup
+		 * run before MUI invalidates the Intuition Window during app disposal. */
+		VideoPrepareGUIShutdown();
+		MUI_DisposeObject(app);
+		app = NULL;
+	}
 
-	if (CL_Display)
+	if (CL_Display) {
 		MUI_DeleteCustomClass(CL_Display);
+		CL_Display = NULL;
+	}
 
-	if (CL_App)
+	if (CL_App) {
 		MUI_DeleteCustomClass(CL_App);
+		CL_App = NULL;
+	}
 
-	if (MainScreen)
+	if (MainScreen) {
 		CloseScreen(MainScreen);
+		MainScreen = NULL;
+	}
 }
 
 /**********************************************************************
@@ -212,14 +227,14 @@ static void MainGUI(void)
 	NewGetTaskAttrs(NULL, &port, sizeof(struct MsgPort *), TASKINFOTYPE_TASKMSGPORT, TAG_DONE);
 
 	if ((CL_App = MUI_CreateCustomClass(NULL, MUIC_Application, NULL, sizeof(struct App_Data), (APTR)&ApplicationTrap)))
-	if ((CL_Display = MUI_CreateCustomClass(NULL, MUIC_Area, NULL, sizeof(struct Display_Data), (APTR)&DisplayTrap)))
+	if ((CL_Display = MUI_CreateCustomClass(NULL, MUIC_Area, NULL, DisplayDataSize(), (APTR)&DisplayTrap)))
 	{
 		Object *myapp;
 
 		myapp = (Object *)NewObject(CL_App->mcc_Class, NULL,
 			MUIA_Application_DiskObject, dobj,
-			MUIA_Application_Version, "Basilisk II 1.2",
-			MUIA_Application_Copyright, "Christian Bauer, Ilkka Lehtoranta",
+			MUIA_Application_Version, "Basilisk II 1.3",
+			MUIA_Application_Copyright, "Christian Bauer, Ilkka Lehtoranta, Michal Zukowski",
 			MUIA_Application_Author, "Christian Bauer, Ilkka Lehtoranta",
 			MUIA_Application_Base, "BASILISKII",
 			MUIA_Application_UsedClasses, ClassList,
@@ -243,44 +258,41 @@ static void MainGUI(void)
 				LONG ret = DoMethod(myapp, MUIM_Application_NewInput, &signals);
 
 				if (ret == MUIV_Application_ReturnID_Quit)
-				{
 					quitflag = 1;
-				}
 
-				if (signals)
+				/* Always include the private GUI command port in the wait mask.
+				 * Some MUI versions can return zero here; the old code then
+				 * busy-spun and did not service GUIPort. */
+				signals = Wait(signals | portmask | SIGBREAKF_CTRL_C);
+
+				if (signals & SIGBREAKF_CTRL_C)
+					quitflag = 1;
+
+				if (signals & portmask)
 				{
-					signals	= Wait(signals | portmask | SIGBREAKF_CTRL_C);
+					struct GUI_Message *msg = (struct GUI_Message *)GetMsg(port);
 
-					if (signals & SIGBREAKF_CTRL_C)
+					if (msg)
 					{
-						quitflag = 1;
-					}
+						int rc = 0;
 
-					if (signals & portmask)
-					{
-						struct GUI_Message	*msg;
-
-						msg	= (struct GUI_Message *)GetMsg(port);
-
-						if (msg)
+						switch (msg->Command)
 						{
-							int rc = 0;
+							case GUICMD_Quit:
+								quit = 1;
+								break;
 
-							switch (msg->Command)
-							{
-								case GUICMD_Quit	: quit = 1; break;
-								case GUICMD_Prefs	:
-									rc = RunPrefs();
-									break;
-								case GUICMD_InitVideo:
-									rc	= RunVideo();
-									break;
-							}
+							case GUICMD_Prefs:
+								rc = RunPrefs();
+								break;
 
-							msg->Ok	= rc;
-
-							ReplyMsg((struct Message *)msg);
+							case GUICMD_InitVideo:
+								rc = RunVideo();
+								break;
 						}
+
+						msg->Ok = rc;
+						ReplyMsg((struct Message *)msg);
 					}
 				}
 			}
@@ -383,7 +395,11 @@ void FinishGUIThread(void)
 	if (GUIPort)
 	{
 		SendGUICmd(GUICMD_Quit);
+		GUIPort = NULL;
 	}
 
-	DeleteMsgPort(Rendezvous);
+	if (Rendezvous) {
+		DeleteMsgPort(Rendezvous);
+		Rendezvous = NULL;
+	}
 }

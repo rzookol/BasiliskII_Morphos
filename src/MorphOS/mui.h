@@ -23,6 +23,8 @@
 #define MUI_MORPHOS_H
 
 #define CATCOMP_NUMBERS
+#include <intuition/pointerclass.h>
+#include <cybergraphx/cgxvideo.h>
 #include "locale/locale.h"
 
 // Methods and tags
@@ -42,17 +44,34 @@ struct Display_Data
 {
 	UWORD				null_pointer[6];
 	UWORD				*current_pointer;
+	Object				*cursor_object;
+	struct BitMap		*cursor_bitmap;
+	ULONG				cursor_serial;
+	UBYTE				mac_cursor[68];
 	DRAWMODE			drawmode;
 	ULONG				width, height, frameskip, bytes_per_row;
-	APTR				pixelarray, VLayer;
-	Object			*parent;
+	ULONG				alloc_bytes_per_row, last_guest_bpr;
+	LONG				last_mode;
+	APTR				pixelarray;
+	APTR				conversion_buffer;
+	APTR				shadow_buffer;
+	struct VLayerHandle	*VLayer;
+	Object				*parent;
+	ULONG				overlay_active;
+	ULONG				overlay_geometry_valid;
+	LONG				overlay_dest_left, overlay_dest_top;
+	ULONG				overlay_dest_width, overlay_dest_height;
+	ULONG				mouse_in_display;
+	ULONG				dirty_left, dirty_top, dirty_right, dirty_bottom, dirty_valid;
 
 	struct MsgPort						*timerport;
 	struct timerequest				*timer_io;
 	struct MUI_InputHandlerNode	ihnode;
 	struct MUI_EventHandlerNode	ehnode;
-	ULONG									timer_ok;
-	ULONG									pix_array_size;
+	ULONG								timer_ok;
+	ULONG								pix_array_size;
+	ULONG								conversion_size;
+	ULONG								shadow_size;
 };
 
 
@@ -66,6 +85,7 @@ Object *	MakePopFile	(LONG id, ULONG maxlen, Object **str_obj);
 Object *	MakeCycle	(LONG id, const CONST_STRPTR *entries);
 Object *	MakeRect		(ULONG weight);
 Object *	MakeCheck	(LONG id, Object **ch_obj);
+Object *	MakeCheckmark(LONG id);
 Object *	MakeInteger	(LONG id, ULONG maxlen);
 Object *	MakeString	(LONG id, ULONG maxlen);
 Object *	MakeLabel	(LONG id);

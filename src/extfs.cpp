@@ -64,6 +64,13 @@
 #define DEBUG 0
 #include "debug.h"
 
+// Most platforms use the same epoch for stat()/time_t as TIME_OFFSET.
+// MorphOS is special: stat() uses the Unix 1970 epoch, while native
+// timer.device/DOS DateStamp use the 1978 epoch.
+#ifndef STAT_TIME_OFFSET
+#define STAT_TIME_OFFSET TIME_OFFSET
+#endif
+
 
 // File system global data and 68k routines
 enum {
@@ -973,11 +980,13 @@ static int16 fs_volume_mount(uint32 pb)
 	// Init VCB
 	WriteMacInt16(vcb + vcbSigWord, 0x4244);
 #if defined(__BEOS__) || defined(WIN32)
-	WriteMacInt32(vcb + vcbCrDate, root_stat.st_crtime + TIME_OFFSET);
+	WriteMacInt32(vcb + vcbCrDate, root_stat.st_crtime + STAT_TIME_OFFSET);
+#elif defined(__MORPHOS__)
+	WriteMacInt32(vcb + vcbCrDate, root_stat.st_mtime + STAT_TIME_OFFSET);
 #else
 	WriteMacInt32(vcb + vcbCrDate, 0);
 #endif
-	WriteMacInt32(vcb + vcbLsMod, root_stat.st_mtime + TIME_OFFSET);
+	WriteMacInt32(vcb + vcbLsMod, root_stat.st_mtime + STAT_TIME_OFFSET);
 	WriteMacInt32(vcb + vcbVolBkUp, 0);
 	WriteMacInt16(vcb + vcbNmFls, 1);			//!!
 	WriteMacInt16(vcb + vcbNmRtDirs, 1);		//!!
@@ -1036,11 +1045,13 @@ static int16 fs_get_vol_info(uint32 pb, bool hfs)
 	if (ReadMacInt32(pb + ioNamePtr))
 		pstrcpy((char *)Mac2HostAddr(ReadMacInt32(pb + ioNamePtr)), VOLUME_NAME);
 #if defined(__BEOS__) || defined(WIN32)
-	WriteMacInt32(pb + ioVCrDate, root_stat.st_crtime + TIME_OFFSET);
+	WriteMacInt32(pb + ioVCrDate, root_stat.st_crtime + STAT_TIME_OFFSET);
+#elif defined(__MORPHOS__)
+	WriteMacInt32(pb + ioVCrDate, root_stat.st_mtime + STAT_TIME_OFFSET);
 #else
 	WriteMacInt32(pb + ioVCrDate, 0);
 #endif
-	WriteMacInt32(pb + ioVLsMod, root_stat.st_mtime + TIME_OFFSET);
+	WriteMacInt32(pb + ioVLsMod, root_stat.st_mtime + STAT_TIME_OFFSET);
 	WriteMacInt16(pb + ioVAtrb, 0);
 	WriteMacInt16(pb + ioVNmFls, 1);			//!!
 	WriteMacInt16(pb + ioVBitMap, 0);
@@ -1228,11 +1239,13 @@ read_next_de:
 	WriteMacInt32(pb + ioDirID, fs_item->id);
 
 #if defined(__BEOS__) || defined(WIN32)
-	WriteMacInt32(pb + ioFlCrDat, st.st_crtime + TIME_OFFSET);
+	WriteMacInt32(pb + ioFlCrDat, st.st_crtime + STAT_TIME_OFFSET);
+#elif defined(__MORPHOS__)
+	WriteMacInt32(pb + ioFlCrDat, st.st_mtime + STAT_TIME_OFFSET);
 #else
 	WriteMacInt32(pb + ioFlCrDat, 0);
 #endif
-	WriteMacInt32(pb + ioFlMdDat, st.st_mtime + TIME_OFFSET);
+	WriteMacInt32(pb + ioFlMdDat, st.st_mtime + STAT_TIME_OFFSET);
 
 	get_finfo(full_path, pb + ioFlFndrInfo, hfs ? pb + ioFlXFndrInfo : 0, false);
 
@@ -1350,7 +1363,9 @@ read_next_de:
 	WriteMacInt32(pb + ioDirID, fs_item->id);
 	WriteMacInt32(pb + ioFlParID, fs_item->parent_id);
 #if defined(__BEOS__) || defined(WIN32)
-	WriteMacInt32(pb + ioFlCrDat, st.st_crtime + TIME_OFFSET);
+	WriteMacInt32(pb + ioFlCrDat, st.st_crtime + STAT_TIME_OFFSET);
+#elif defined(__MORPHOS__)
+	WriteMacInt32(pb + ioFlCrDat, st.st_mtime + STAT_TIME_OFFSET);
 #else
 	WriteMacInt32(pb + ioFlCrDat, 0);
 #endif
@@ -1360,7 +1375,7 @@ read_next_de:
 		fs_item->mtime = mtime;
 		cached = false;
 	}
-	WriteMacInt32(pb + ioFlMdDat, mtime + TIME_OFFSET);
+	WriteMacInt32(pb + ioFlMdDat, mtime + STAT_TIME_OFFSET);
 	WriteMacInt32(pb + ioFlBkDat, 0);
 
 	get_finfo(full_path, pb + ioFlFndrInfo, pb + ioFlXFndrInfo, S_ISDIR(st.st_mode));
@@ -1715,7 +1730,7 @@ static int16 fs_set_fpos(uint32 pb)
 			return fnOpnErr;
 
 	// Set file position
-	switch (ReadMacInt16(pb + ioPosMode)) {
+	switch (ReadMacInt16(pb + ioPosMode) & 3) {
 		case fsFromStart:
 			if (lseek(fd, ReadMacInt32(pb + ioPosOffset), SEEK_SET) < 0)
 				return posErr;

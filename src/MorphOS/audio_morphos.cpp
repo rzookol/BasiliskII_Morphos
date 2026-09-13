@@ -42,7 +42,7 @@
 
 // Supported sample rates, sizes and channels
 int audio_num_sample_rates = 1;
-uint32 audio_sample_rates[] = {AUDIO_FREQUENCY << 16};
+uint32 audio_sample_rates[] = {((uint32)AUDIO_FREQUENCY) << 16};
 int audio_num_sample_sizes = 1;
 uint16 audio_sample_sizes[] = {16};
 int audio_num_channel_counts = 1;
@@ -73,6 +73,8 @@ static VOID SoundFunc(APTR buf1, APTR buf2)
 	struct AHIRequest req1, req2;
 	struct MsgPort	*port;
 
+	memset(&req1, 0, sizeof(req1));
+	memset(&req2, 0, sizeof(req2));
 	NewGetTaskAttrs(NULL, &port, sizeof(struct MsgPort *), TASKINFOTYPE_TASKMSGPORT, TAG_DONE);
 
 	req1.ahir_Std.io_Message.mn_Node.ln_Name	= NULL;
@@ -107,8 +109,8 @@ static VOID SoundFunc(APTR buf1, APTR buf2)
 
 		req1.ahir_Std.io_Data	= buf1;
 		req2.ahir_Std.io_Data	= buf2;
-		req1.ahir_Std.io_Length	= 2048;
-		req2.ahir_Std.io_Length	= 2048;
+		req1.ahir_Std.io_Length	= sound_buffer_size;
+		req2.ahir_Std.io_Length	= sound_buffer_size;
 		req1.ahir_Link				= NULL;
 		req2.ahir_Link				= &req1;
 
@@ -142,21 +144,23 @@ static VOID SoundFunc(APTR buf1, APTR buf2)
 					// Get size of audio data
 					uint32 apple_stream_info = ReadMacInt32(audio_data + adatStreamInfo);
 
+					ULONG work_size = 0;
 					if (apple_stream_info)
 					{
-						int work_size = ReadMacInt32(apple_stream_info + scd_sampleCount) * (AudioStatus.sample_size >> 3) * AudioStatus.channels;
-						D(bug("stream: work_size %d\n", work_size));
-						if (work_size > sound_buffer_size)
-							work_size = sound_buffer_size;
+						UQUAD sample_count = ReadMacInt32(apple_stream_info + scd_sampleCount);
+						UQUAD byte_count = sample_count * (AudioStatus.sample_size >> 3) * AudioStatus.channels;
+						work_size = byte_count > (UQUAD)sound_buffer_size ? sound_buffer_size : (ULONG)byte_count;
+						D(bug("stream: work_size %ld\n", work_size));
 
-						// Put data into AHI buffer (convert 8-bit data unsigned->signed)
-						Mac2Host_memcpy(io->ahir_Std.io_Data, ReadMacInt32(apple_stream_info + scd_buffer), work_size);
-
-						if (work_size != sound_buffer_size)
-						{
-							memset((uint8 *)io->ahir_Std.io_Data + work_size, 0, sound_buffer_size - work_size);
-						}
+						uint32 source = ReadMacInt32(apple_stream_info + scd_buffer);
+						if (work_size && source)
+							Mac2Host_memcpy(io->ahir_Std.io_Data, source, work_size);
+						else
+							work_size = 0;
 					}
+
+					if (work_size < (ULONG)sound_buffer_size)
+						memset((uint8 *)io->ahir_Std.io_Data + work_size, 0, sound_buffer_size - work_size);
 				}
 				else if (ab[idx].cleared == 0)
 				{
@@ -183,16 +187,17 @@ static VOID SoundFunc(APTR buf1, APTR buf2)
 			}
 		}
 
-		AbortIO((struct IORequest *)&req1);
-		AbortIO((struct IORequest *)&req2);
+		if (!CheckIO((struct IORequest *)&req1))
+			AbortIO((struct IORequest *)&req1);
+		if (!CheckIO((struct IORequest *)&req2))
+			AbortIO((struct IORequest *)&req2);
 		WaitIO((struct IORequest *)&req1);
 		WaitIO((struct IORequest *)&req2);
-		GetMsg(port);
-		GetMsg(port);
 
 		CloseDevice((struct IORequest *)&req1);
 	}
 
+	audio_open = false;
 	SoundProc	= NULL;
 }
 
@@ -278,7 +283,7 @@ void audio_enter_stream()
 void audio_exit_stream()
 {
 	play_audio	= 0;
-//	audio_block_fetched	= 0;
+	audio_block_fetched = 0;
 }
 
 

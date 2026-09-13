@@ -102,6 +102,42 @@ static void PString(char *str)
 		srom[p++] = 0;
 }
 
+#ifdef __MORPHOS__
+static uint32 MorphOSRowBytes(int mode)
+{
+	uint32 bytes = mode == VMODE_8BIT ? 1 : mode == VMODE_16BIT ? 2 : 4;
+	return (VideoMonitor.x * bytes + 31) & ~31;
+}
+
+static uint32 MorphOSVModeParms(int mode)
+{
+	uint32 ret = p;
+	Long(50); Long(0);
+	Word(MorphOSRowBytes(mode));
+	Word(0); Word(0); Word(VideoMonitor.y); Word(VideoMonitor.x);
+	Word(0); Word(0); Long(0); Long(0x00480000); Long(0x00480000);
+	if (mode == VMODE_8BIT) {
+		Word(0); Word(8); Word(1); Word(8);
+	} else if (mode == VMODE_16BIT) {
+		Word(16); Word(16); Word(3); Word(5);
+	} else {
+		Word(16); Word(32); Word(3); Word(8);
+	}
+	Long(0); Long(0);
+	return ret;
+}
+
+static uint32 MorphOSVModeDesc(uint32 params, bool direct)
+{
+	uint32 ret = p;
+	Offs(0x01, params);
+	Rsrc(0x03, 1);
+	Rsrc(0x04, direct ? 2 : 0);
+	EndOfList();
+	return ret;
+}
+#endif
+
 bool InstallSlotROM(void)
 {
 	uint32 boardType, boardName, vendorID, revLevel, partNum, date;
@@ -156,7 +192,11 @@ bool InstallSlotROM(void)
 	minorBase = p;
 	Long(VideoMonitor.mac_frame_base);					// Frame buffer base
 	minorLength = p;
+	#ifdef __MORPHOS__
+	Long(MorphOSRowBytes(VMODE_32BIT) * VideoMonitor.y);	// Max frame buffer size for live 8/16/32-bit switching
+#else
 	Long(VideoMonitor.bytes_per_row * VideoMonitor.y);	// Frame buffer size
+#endif
 
 	videoDrvr = p;						// Video driver
 	Long(0x72);							// Length
@@ -229,6 +269,29 @@ bool InstallSlotROM(void)
 	Offs(0x80, defaultGamma);
 	EndOfList();
 
+#ifdef __MORPHOS__
+	// MorphOS exposes 8/16/32-bit modes for the same resolution so Mac OS can switch depth live.
+	uint32 vidModeParms8 = MorphOSVModeParms(VMODE_8BIT);
+	uint32 vidModeParms16 = MorphOSVModeParms(VMODE_16BIT);
+	uint32 vidModeParms32 = MorphOSVModeParms(VMODE_32BIT);
+	uint32 vidMode8 = MorphOSVModeDesc(vidModeParms8, false);
+	uint32 vidMode16 = MorphOSVModeDesc(vidModeParms16, true);
+	uint32 vidMode32 = MorphOSVModeDesc(vidModeParms32, true);
+
+	sRsrcVideo = p;
+	Offs(0x01, videoType);
+	Offs(0x02, videoName);
+	Offs(0x04, vidDrvrDir);
+	Rsrc(0x08, 0x4232);
+	Offs(0x0a, minorBase);
+	Offs(0x0b, minorLength);
+	Offs(0x40, gammaDir);
+	Rsrc(0x7d, 6);
+	Offs(0x80, vidMode8);
+	Offs(0x81, vidMode16);
+	Offs(0x82, vidMode32);
+	EndOfList();
+#else
 	vidModeParms = p;					// Video mode parameters
 	Long(50);							// Length
 	Long(0);							// Base offset
@@ -300,6 +363,8 @@ bool InstallSlotROM(void)
 	Rsrc(0x7d, 6);						// Video attributes: Default to color, built-in
 	Offs(0x80, vidMode);				// Video mode parameters
 	EndOfList();
+
+#endif
 
 	// CPU sResource
 	cpuType = p;						// Literals

@@ -4,7 +4,7 @@
 STRIP = strip
 CC = g++ -noixemul
 CXX = g++ -noixemul
-CXXFLAGS = -g -O3 -funroll-loops -finline-functions -ffast-math -mcpu=750 -mstring -mmultiple -Wall -Wno-multichar -DSYSTEM_PRIVATE
+CXXFLAGS = -g -O3 -funroll-loops -finline-functions -ffast-math -mcpu=750 -mmultiple -Wall -Wno-multichar -DSYSTEM_PRIVATE
 CPPFLAGS = -I../include -I../uae_cpu -I.
 DEFS =
 LDFLAGS = -noixemul
@@ -36,12 +36,13 @@ SRCS = ../main.cpp main_morphos.cpp guithread.cpp ../prefs.cpp ../prefs_items.cp
     ../cdrom.cpp ../scsi.cpp scsi_morphos.cpp ../video.cpp video_morphos.cpp \
     ../audio.cpp audio_morphos.cpp ../extfs.cpp extfs_morphos.cpp \
     ../user_strings.cpp user_strings_morphos.cpp prefs_editor_morphos.cpp mui.cpp rdb.cpp \
+	altivec_detect_morphos.cpp altivec_convert_morphos.cpp \
 	$(CPUSRCS)
 
 APP = BasiliskII
 
 ## Rules
-.PHONY: clean distclean
+.PHONY: clean distclean locale locale-polish
 .SUFFIXES:
 .SUFFIXES: .c .cpp .asm .o .h
 
@@ -76,6 +77,12 @@ dump:
 
 locale: locale/locale.c locale/locale.h
 
+locale-polish: locale/polish/basilisk.catalog
+
+locale/polish/basilisk.catalog: locale/basilisk.cd locale/basilisk.polish.ct
+	@[ -d locale/polish ] || mkdir -p locale/polish > /dev/null 2>&1
+	@$(CATCOMP) locale/basilisk.cd locale/basilisk.polish.ct CATALOG $@
+
 locale/basilisk.ct: locale/basilisk.cd
 	@$(CATCOMP) locale/basilisk.cd CTFILE locale/basilisk.ct
 
@@ -88,6 +95,10 @@ locale/locale.c: locale/basilisk.cd locale/basilisk.ct
 distclean: clean
 	rm -rf $(OBJ_DIR)
 
+$(OBJ_DIR)/altivec_convert_morphos.o : altivec_convert_morphos.cpp
+	$(COMPILING)
+	@$(CXX) $(CPPFLAGS) $(DEFS) $(CXXFLAGS) -maltivec -mabi=altivec -fno-lto -c $< -o $@
+
 $(OBJ_DIR)/%.o : %.cpp
 	$(COMPILING)
 	@$(CXX) $(CPPFLAGS) $(DEFS) $(CXXFLAGS) -c $< -o $@
@@ -95,6 +106,13 @@ $(OBJ_DIR)/%.o : %.cpp
 $(OBJ_DIR)/%.o : %.c
 	$(COMPILING)
 	@$(CC) -noixemul $(CPPFLAGS) $(DEFS) $(CXXFLAGS) -c $< -o $@
+
+# mui.h contains custom-class instance layouts shared by several translation
+# units.  Keep incremental builds ABI-safe when that header changes.
+$(OBJ_DIR)/guithread.o $(OBJ_DIR)/video_morphos.o $(OBJ_DIR)/prefs_editor_morphos.o $(OBJ_DIR)/mui.o $(OBJ_DIR)/rdb.o: mui.h
+$(OBJ_DIR)/emul_op.o $(OBJ_DIR)/rsrc_patches.o: ../include/emul_op.h
+$(OBJ_DIR)/basilisk_glue.o $(OBJ_DIR)/emul_op.o $(OBJ_DIR)/timer_morphos.o $(OBJ_DIR)/main_morphos.o: ../include/timer.h
+$(OBJ_DIR)/extfs.o $(OBJ_DIR)/extfs_morphos.o $(OBJ_DIR)/macos_util.o: ../include/macos_util.h
 
 $(OBJ_DIR)/cpuopti: $(OBJ_DIR)/cpuopti.o
 	$(COMPILING)

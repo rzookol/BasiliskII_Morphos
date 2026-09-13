@@ -292,7 +292,7 @@ MSG_MENU_BASILISK_QUIT
 ;
 MSG_AUTHOR_INFORMATION
 
-; \33cBasilisk II 1.2 by Christian Bauer\n© Copyright 1997-2001\nDistribtion under General Public License (GPL)
+; \33cBasilisk II 1.3 by Christian Bauer\n© Copyright 1997-2001\nDistribtion under General Public License (GPL)
 ;
 MSG_PORT_INFORMATION
 
@@ -313,4 +313,28 @@ MSG_CHOOSE_PARTITION_FORMAT_MB
 MSG_CHOOSE_PARTITION_FORMAT_GB
 
 ; %.1f GB
+;
+MSG_PREFS_CPU_FPU_GAD
+
+; CPU / FPU
+;
+MSG_PREFS_GFX_DEPTH_GAD
+Color depth
+; Color depth
+;
+MSG_PREFS_GFX_ACCEL_GAD
+Fast screen updates
+; Fast screen updates
+;
+MSG_PREFS_GFX_OVERLAY_GAD
+CGXVideo overlay
+; CGXVideo overlay
+;
+MSG_PREFS_GFX_HWCURSOR_GAD
+Hardware mouse cursor
+; Hardware mouse cursor
+;
+MSG_PREFS_GFX_ALTIVEC_GAD
+AltiVec acceleration
+; AltiVec acceleration
 ;

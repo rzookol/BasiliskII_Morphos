@@ -111,6 +111,13 @@ static bool ChoiceAlert2(const char *text, const char *pos, const char *neg);
 
 struct Catalog *catalog;
 
+// Startup state used to make QuitEmulator() safe after partial initialization.
+static bool prefs_initialized = false;
+static bool sys_initialized = false;
+static bool gui_init_attempted = false;
+static bool timer_open = false;
+static bool init_all_started = false;
+
 /*
  * Open libraries
  */
@@ -153,12 +160,7 @@ int main(int argc, char **argv)
 	DateStamp(&ds);
 	srand(ds.ds_Tick);
 
-	// Print some info
-	if (!wbstart)
-	{
-		printf(GetString(STR_ABOUT_TEXT1), VERSION_MAJOR, VERSION_MINOR);
-		printf(" %s\n", GetString(STR_ABOUT_TEXT2));
-	}
+	// Keep shell startup quiet. Errors and warnings are still reported.
 
 	if (openlibs() == 0)
 	{
@@ -194,16 +196,21 @@ int main(int argc, char **argv)
 		dobj	= GetDiskObject("PROGDIR:BasiliskII");
 	}
 
-	if ((StartupMsgPort = CreateMsgPort()) == NULL || InitGUIThread() == 0)
-	{
+	StartupMsgPort = CreateMsgPort();
+	if (StartupMsgPort == NULL)
 		QuitEmulator();
-	}
+
+	gui_init_attempted = true;
+	if (InitGUIThread() == 0)
+		QuitEmulator();
 
 	// Read preferences
 	PrefsInit(argc, argv);
+	prefs_initialized = true;
 
 	// Init system routines
 	SysInit();
+	sys_initialized = true;
 
 	// Show preferences editor
 	if (!PrefsFindBool("nogui"))
@@ -218,6 +225,7 @@ int main(int argc, char **argv)
 		QuitEmulator();
 	}
 	TimerBase = (struct Library *)timereq.tr_node.io_Device;
+	timer_open = true;
 
 	// Allocate scratch memory
 	ScratchMem = (uint8 *)AllocTaskPooled(SCRATCH_MEM_SIZE);
@@ -241,12 +249,13 @@ int main(int argc, char **argv)
 		int64 newRAMSize = AvailMem(MEMF_LARGEST);
 		newRAMSize -= 0x100000;
 		newRAMSize -= 0x100000*16;
+		newRAMSize &= ~((int64)0xfffff);	// Keep Mac RAM on a 1 MB boundary
 
 		if (newRAMSize >= (1024*1024))
 		{
 			char xText[120];
 
-			sprintf(xText, GetString(STR_NOT_ENOUGH_MEM_WARN), RAMSize / 1024 / 1024, (int32)(newRAMSize / 1024 / 1024));
+			snprintf(xText, sizeof(xText), GetString(STR_NOT_ENOUGH_MEM_WARN), RAMSize / 1024 / 1024, (int32)(newRAMSize / 1024 / 1024));
 
 			if (ChoiceAlert2(xText, "Use", "Quit") != 1)
 				QuitEmulator();
@@ -278,11 +287,6 @@ int main(int argc, char **argv)
 		ErrorAlert(GetString(STR_NO_ROM_FILE_ERR));
 		QuitEmulator();
 	}
-	if (!wbstart)
-	{
-		printf(GetString(STR_READING_ROM_FILE));
-	}
-
 	struct FileInfoBlock fib;
 	ExamineFH(rom_fh, &fib);
 
@@ -304,7 +308,16 @@ int main(int argc, char **argv)
 
 	Close(rom_fh);
 
+	// Check the ROM before marking the subsystem set as initialized. InitAll()
+	// starts with the same check, but this prevents ExitAll() from saving an
+	// uninitialized XPRAM image when the ROM itself is unsupported.
+	if (!CheckROM()) {
+		ErrorAlert(GetString(STR_UNSUPPORTED_ROM_TYPE_ERR));
+		QuitEmulator();
+	}
+
 	// Initialize everything
+	init_all_started = true;
 	if (!InitAll())
 		QuitEmulator();
 
@@ -385,52 +398,67 @@ void QuitEmulator(void)
 	}
 	Permit();
 
-	FinishGUIThread();
+	if (gui_init_attempted) {
+		FinishGUIThread();
+		gui_init_attempted = false;
+	}
 
-	while (SubTaskCount)
+	while (SubTaskCount && StartupMsgPort)
 	{
 		WaitPort(StartupMsgPort);
 		GetMsg(StartupMsgPort);
 		SubTaskCount--;
 	}
 
-	// Deinitialize everything
-	ExitAll();
+	// idle_wait() lazily allocates an Exec signal on MainTask. All helper
+	// tasks are stopped now, so no later TriggerInterrupt()/idle_resume() can
+	// race the release.
+	idle_exit();
+
+	// Deinitialize everything only if InitAll() was actually entered.
+	if (init_all_started) {
+		ExitAll();
+		init_all_started = false;
+	}
 
 	// Close timer.device
-	if (TimerBase)
+	if (timer_open) {
 		CloseDevice((struct IORequest *)&timereq);
+		timer_open = false;
+		TimerBase = NULL;
+	}
 
 	// Exit system routines
-	SysExit();
+	if (sys_initialized) {
+		SysExit();
+		sys_initialized = false;
+	}
 
 	// Exit preferences
-	PrefsExit();
-
-	DeleteMsgPort(StartupMsgPort);
-
-	// Close libraries
-
-	if (LocaleBase)
-	{
-		CloseCatalog(catalog);
-		CloseLibrary(LocaleBase);
+	if (prefs_initialized) {
+		PrefsExit();
+		prefs_initialized = false;
 	}
 
-	if (IconBase)
-	{
-		FreeDiskObject(dobj);
-		CloseLibrary(IconBase);
+	if (StartupMsgPort) {
+		DeleteMsgPort(StartupMsgPort);
+		StartupMsgPort = NULL;
 	}
 
-	CloseLibrary(MUIMasterBase);
-	CloseLibrary(CyberGfxBase);
-	CloseLibrary(AslBase);
-	CloseLibrary(IFFParseBase);
-	CloseLibrary((struct Library *)IntuitionBase);
-	CloseLibrary(GfxBase);
-	CloseLibrary(KeymapBase);
-	CloseLibrary(UtilityBase);
+	// Close libraries. openlibs() can fail halfway through, so every handle
+	// must be checked independently.
+	if (catalog) { CloseCatalog(catalog); catalog = NULL; }
+	if (LocaleBase) { CloseLibrary(LocaleBase); LocaleBase = NULL; }
+	if (dobj) { FreeDiskObject(dobj); dobj = NULL; }
+	if (IconBase) { CloseLibrary(IconBase); IconBase = NULL; }
+	if (MUIMasterBase) { CloseLibrary(MUIMasterBase); MUIMasterBase = NULL; }
+	if (CyberGfxBase) { CloseLibrary(CyberGfxBase); CyberGfxBase = NULL; }
+	if (AslBase) { CloseLibrary(AslBase); AslBase = NULL; }
+	if (IFFParseBase) { CloseLibrary(IFFParseBase); IFFParseBase = NULL; }
+	if (IntuitionBase) { CloseLibrary((struct Library *)IntuitionBase); IntuitionBase = NULL; }
+	if (GfxBase) { CloseLibrary(GfxBase); GfxBase = NULL; }
+	if (KeymapBase) { CloseLibrary(KeymapBase); KeymapBase = NULL; }
+	if (UtilityBase) { CloseLibrary(UtilityBase); UtilityBase = NULL; }
 
 	exit(0);
 }
@@ -453,29 +481,28 @@ uint32 InterruptFlags;
 
 #if defined(__PPC__)
 extern "C" {
-static void SetIntFlag(uint32 flag, uint32 *ptr);
-static void ClearIntFlag(uint32 flag, uint32 *ptr);
-asm("
-	.section \".text\"
-	.align 2
-	.type SetIntFlag,@function
-	.globl SetIntFlag
-SetIntFlag:
-	lwarx   %r12,%r0,%r4
-	or      %r12,%r12,%r3
-	stwcx.  %r12,%r0,%r4
-	bne-    SetIntFlag
-	blr
-
-	.type ClearIntFlag,@function
-	.globl ClearIntFlag
-ClearIntFlag:
-	lwarx   %r12,%r0,%r4
-	andc    %r12,%r12,%r3
-	stwcx.  %r12,%r0,%r4
-	bne-    ClearIntFlag
-	blr
-");
+void SetIntFlag(uint32 flag, uint32 *ptr);
+void ClearIntFlag(uint32 flag, uint32 *ptr);
+asm(
+	".section \".text\"\n"
+	".align 2\n"
+	".type SetIntFlag,@function\n"
+	".globl SetIntFlag\n"
+	"SetIntFlag:\n"
+	"lwarx   %r12,%r0,%r4\n"
+	"or      %r12,%r12,%r3\n"
+	"stwcx.  %r12,%r0,%r4\n"
+	"bne-    SetIntFlag\n"
+	"blr\n"
+	".type ClearIntFlag,@function\n"
+	".globl ClearIntFlag\n"
+	"ClearIntFlag:\n"
+	"lwarx   %r12,%r0,%r4\n"
+	"andc    %r12,%r12,%r3\n"
+	"stwcx.  %r12,%r0,%r4\n"
+	"bne-    ClearIntFlag\n"
+	"blr\n"
+);
 }
 #else
 static void SetIntFlag(uint32 flag, uint32 *ptr)
@@ -568,9 +595,9 @@ static void tick_func(void)
 	// Stop timer
 	if (timer_ok)
 	{
-		AbortIO((struct IORequest *)&timer_io);
+		if (!CheckIO((struct IORequest *)&timer_io))
+			AbortIO((struct IORequest *)&timer_io);
 		WaitIO((struct IORequest *)&timer_io);
-		GetMsg(timer_port);
 		CloseDevice((struct IORequest *)&timer_io);
 	}
 }
@@ -613,7 +640,7 @@ void ErrorAlert(const char *text)
 		return;
 	}
 
-	MUI_Request(NULL, NULL, 0, GetString(STR_ERROR_ALERT_TITLE), GetString(STR_QUIT_BUTTON), GetString(STR_GUI_ERROR_PREFIX), text);
+	MUI_Request(NULL, NULL, 0, (STRPTR)GetString(STR_ERROR_ALERT_TITLE), (STRPTR)GetString(STR_QUIT_BUTTON), (STRPTR)GetString(STR_GUI_ERROR_PREFIX), text);
 }
 
 
@@ -628,7 +655,7 @@ void WarningAlert(const char *text)
 		return;
 	}
 
-	MUI_Request(NULL, NULL, 0, GetString(STR_WARNING_ALERT_TITLE), GetString(STR_OK_BUTTON), GetString(STR_GUI_WARNING_PREFIX), text);
+	MUI_Request(NULL, NULL, 0, (STRPTR)GetString(STR_WARNING_ALERT_TITLE), (STRPTR)GetString(STR_OK_BUTTON), (STRPTR)GetString(STR_GUI_WARNING_PREFIX), text);
 }
 
 
@@ -639,8 +666,8 @@ void WarningAlert(const char *text)
 static bool ChoiceAlert2(const char *text, const char *pos, const char *neg)
 {
 	TEXT str[256];
-	sprintf((char *)str, "%s|%s", pos, neg);
-	return MUI_Request(NULL, NULL, 0, GetString(STR_WARNING_ALERT_TITLE), (STRPTR)str, GetString(STR_GUI_WARNING_PREFIX), text);
+	snprintf((char *)str, sizeof(str), "%s|%s", pos, neg);
+	return MUI_Request(NULL, NULL, 0, (STRPTR)GetString(STR_WARNING_ALERT_TITLE), (STRPTR)str, (STRPTR)GetString(STR_GUI_WARNING_PREFIX), text);
 }
 
 

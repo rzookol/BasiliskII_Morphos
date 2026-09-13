@@ -19,14 +19,74 @@
  */
 
 #include <devices/timer.h>
+#include <exec/tasks.h>
+#include <proto/exec.h>
+#include <proto/dos.h>
 #include <proto/timer.h>
-#include <proto/intuition.h>
 
 #include "sysdeps.h"
 #include "timer.h"
 
 #define DEBUG 0
 #include "debug.h"
+
+
+// Main emulator task (created in main_morphos.cpp).
+extern struct Task *MainTask;
+
+// Exec signal used to wake the emulation task from SynchIdleTime().
+// It is allocated lazily by the emulation task itself.
+static BYTE idle_sigbit = -1;
+
+
+/*
+ *  Suspend execution of the emulator task while the guest is idle.
+ */
+
+void idle_wait(void)
+{
+	if (idle_sigbit < 0) {
+		idle_sigbit = AllocSignal(-1);
+		if (idle_sigbit < 0) {
+			// Very unlikely fallback if no Exec signal bit is available.
+			Delay(1);
+			return;
+		}
+	}
+
+	Wait(1UL << idle_sigbit);
+}
+
+
+/*
+ *  Wake the emulation task when a host-side event/interrupt arrives.
+ */
+
+void idle_resume(void)
+{
+	if (idle_sigbit >= 0 && MainTask != NULL)
+		Signal(MainTask, 1UL << idle_sigbit);
+}
+
+
+/*
+ *  Release the Exec signal allocated by idle_wait().
+ *
+ *  AllocSignal() changes the signal allocation mask of the current task, so
+ *  every successful allocation must be paired with FreeSignal() before the
+ *  process exits. QuitEmulator() calls this from MainTask after all helper
+ *  tasks have stopped, so there can be no later idle_resume() racing the free.
+ */
+
+void idle_exit(void)
+{
+	if (idle_sigbit >= 0 && FindTask(NULL) == MainTask) {
+		ULONG mask = 1UL << idle_sigbit;
+		SetSignal(0, mask);      // Drop a stale wakeup, if one is pending.
+		FreeSignal(idle_sigbit);
+		idle_sigbit = -1;
+	}
+}
 
 
 /*
@@ -50,10 +110,11 @@ void Microseconds(uint32 &hi, uint32 &lo)
 
 uint32 TimerDateTime(void)
 {
-	ULONG secs;
-	ULONG mics;
-	CurrentTime(&secs, &mics);
-	return secs + TIME_OFFSET;
+	// timer.device system time uses the native MorphOS epoch, 1-Jan-1978.
+	// Classic MacOS uses local seconds since 1-Jan-1904.
+	struct timeval tv;
+	GetSysTime(&tv);
+	return tv.tv_secs + TIME_OFFSET;
 }
 
 
@@ -109,8 +170,9 @@ void timer_mac2host_time(tm_time_t &res, int32 mactime)
 		res.tv_secs = mactime / 1000;			// Time in milliseconds
 		res.tv_micro = (mactime % 1000) * 1000;
 	} else {
-		res.tv_secs = -mactime / 1000000;		// Time in negative microseconds
-		res.tv_micro = -mactime % 1000000;
+		int64 usec = -(int64)mactime;
+		res.tv_secs = usec / 1000000;		// Time in negative microseconds
+		res.tv_micro = usec % 1000000;
 	}
 }
 
@@ -127,9 +189,10 @@ int32 timer_host2mac_time(tm_time_t hosttime)
 		return 0;
 	else {
 		UQUAD t = (UQUAD)hosttime.tv_secs * 1000000 + hosttime.tv_micro;
-		if (t > 0x7fffffff)
-			return t / 1000;	// Time in milliseconds
-		else
-			return -t;			// Time in negative microseconds
+		if (t > 0x7fffffff) {
+			UQUAD msec = t / 1000;
+			return msec > 0x7fffffff ? 0x7fffffff : (int32)msec;	// Time in milliseconds
+		} else
+			return -(int32)t;		// Time in negative microseconds
 	}
 }

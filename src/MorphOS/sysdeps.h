@@ -82,8 +82,13 @@ typedef UQUAD loff_t;
 // Time data type for Time Manager emulation
 typedef struct timeval tm_time_t;
 
-// Offset Mac->MorphOS time in seconds
+// Offset from MorphOS timer.device/DOS epoch (1-Jan-1978) to Mac epoch (1-Jan-1904).
 #define TIME_OFFSET 0x8b31ef80
+
+// The C runtime stat()/time_t interface uses the Unix epoch (1-Jan-1970),
+// even though native timer.device and DOS DateStamp use the Amiga/MorphOS
+// epoch (1-Jan-1978).  Keep this separate or ExtFS dates are 8 years ahead.
+#define STAT_TIME_OFFSET 0x7c25b080
 
 /* UAE CPU data types */
 #define uae_s8 int8

@@ -42,12 +42,65 @@
 #include "extfs.h"
 #include "emul_op.h"
 
+#ifdef __MORPHOS__
+#include "prefs.h"
+#endif
+
 #ifdef ENABLE_MON
 #include "mon.h"
 #endif
 
 #define DEBUG 0
 #include "debug.h"
+
+#ifdef __MORPHOS__
+// Keep the classic Mac software cursor physically hidden while preserving the
+// normal Cursor Manager machinery.  Do not patch JCrsrTask and do not fake
+// CrsrVis.  Instead add one permanent HideCursor nesting level.  Applications
+// continue to call HideCursor/ShowCursor normally around that bias:
+//   guest CrsrState -1 == logically visible (host pointer visible)
+//   guest CrsrState -2 == one application HideCursor (host pointer hidden)
+// SetCursor still updates TheCrsr, and the normal cursor task still updates
+// Mouse/RawMouse, but the negative state prevents it from painting pixels.
+static bool morphos_cursor_hide_bias = false;
+static bool morphos_cursor_hide_warning = false;
+
+static void MaintainMorphOSGuestCursorHidden(void)
+{
+	if (!PrefsFindBool("hardwarecursor") || !HasMacStarted())
+		return;
+
+	int16 state = (int16)ReadMacInt16(0x08d0); // CrsrState
+	uint8 visible = ReadMacInt8(0x08cc);        // CrsrVis
+
+	// First activation needs one real HideCursor call so any cursor already on
+	// screen is erased through its saved-under data.  If a late InitCursor or an
+	// unbalanced ShowCursor later removes our extra hide level (state >= 0) or
+	// physically paints a cursor (CrsrVis != 0), re-establish the bias the same
+	// clean way.  Never clear CrsrVis directly: that creates permanent trails.
+	if (!morphos_cursor_hide_bias || visible || state >= 0) {
+		uint32 hide_cursor = ReadMacInt32(0x0800); // JHideCursor
+		if (hide_cursor) {
+			M68kRegisters hr;
+			memset(&hr, 0, sizeof(hr));
+			Execute68k(hide_cursor, &hr);
+			morphos_cursor_hide_bias = true;
+		}
+	}
+
+	if (ReadMacInt8(0x08cc) && !morphos_cursor_hide_warning) {
+		printf("WARNING: MorphOS host cursor could not hide guest software cursor\n");
+		morphos_cursor_hide_warning = true;
+	}
+}
+
+static void InstallMorphOSCursorHideBias(void)
+{
+	// Establish the extra Cursor Manager hide nesting level for the host pointer.
+	morphos_cursor_hide_bias = false;
+	MaintainMorphOSGuestCursorHidden();
+}
+#endif
 
 
 /*
@@ -82,6 +135,10 @@ void EmulOp(uint16 opcode, M68kRegisters *r)
 
 		case M68K_EMUL_OP_RESET: {			// MacOS reset
 			D(bug("*** RESET ***\n"));
+#ifdef __MORPHOS__
+			morphos_cursor_hide_bias = false;
+			morphos_cursor_hide_warning = false;
+#endif
 			TimerReset();
 			EtherReset();
 			AudioReset();
@@ -232,6 +289,13 @@ void EmulOp(uint16 opcode, M68kRegisters *r)
 			// Install drivers
 			D(bug("InstallDrivers\n"));
 			InstallDrivers(r->a[0]);
+
+#ifdef __MORPHOS__
+			// Suppress the classic software cursor when Intuition supplies the
+			// host hardware cursor.  Do this here, after Toolbox low-memory
+			// vectors have been initialized.
+			InstallMorphOSCursorHideBias();
+#endif
 
 			// Install PutScrap() patch
 			M68kRegisters r;
@@ -442,6 +506,13 @@ void EmulOp(uint16 opcode, M68kRegisters *r)
 
 				if (HasMacStarted()) {
 
+#ifdef __MORPHOS__
+					// Keep one extra HideCursor nesting level for the host pointer.
+					// This preserves all normal cursor bookkeeping without ever
+					// intentionally drawing the guest software cursor.
+					MaintainMorphOSGuestCursorHidden();
+#endif
+
 					// Mac has started, execute all 60Hz interrupt functions
 //					ADBInterrupt();
 					TimerInterrupt();
@@ -541,6 +612,13 @@ void EmulOp(uint16 opcode, M68kRegisters *r)
 		case M68K_EMUL_OP_DEBUGUTIL:
 		//	printf("DebugUtil d0=%08lx  a5=%08lx\n", r->d[0], r->a[5]);
 			r->d[0] = DebugUtil(r->d[0]);
+			break;
+
+		case M68K_EMUL_OP_IDLE_TIME:	// SynchIdleTime() patch
+			// Sleep only when the Mac event queue is empty.
+			if (ReadMacInt32(0x14c) == 0)
+				idle_wait();
+			r->a[0] = ReadMacInt32(0x2b6);
 			break;
 
 		default:

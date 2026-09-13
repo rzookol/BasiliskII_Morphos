@@ -5,8 +5,8 @@ struct PartInfo
 {
 	TEXT name[32];
 	TEXT size[32];
-	ULONG lowcyl;
-	ULONG highcyl;
+	ULONG start_block;
+	ULONG block_count;
 	ULONG blocksize;
 	ULONG flags;
 };

@@ -103,9 +103,17 @@ static int create_helper_dir(const char *path, const char *add)
 {
 	char helper_dir[MAX_PATH_LENGTH];
 	make_helper_path(path, helper_dir, add, true);
-	if (helper_dir[strlen(helper_dir) - 1] == '/')	// Remove trailing "/"
-		helper_dir[strlen(helper_dir) - 1] = 0;
-	return mkdir(helper_dir, 0777);
+	size_t len = strlen(helper_dir);
+	if (len == 0) {
+		errno = EINVAL;
+		return -1;
+	}
+	if (helper_dir[len - 1] == '/')	// Remove trailing "/"
+		helper_dir[len - 1] = 0;
+	int rc = mkdir(helper_dir, 0777);
+	if (rc < 0 && errno == EEXIST)
+		return 0;
+	return rc;
 }
 
 static int open_helper(const char *path, const char *add, int flag)
@@ -247,6 +255,11 @@ void get_finfo(const char *path, uint32 finfo, uint32 fxinfo, bool is_dir)
 
 void set_finfo(const char *path, uint32 finfo, uint32 fxinfo, bool is_dir)
 {
+	// Do not push Mac timestamps back through dos.library/SetFileDate().
+	// Some MorphOS filesystem paths can route that operation through the
+	// system FUSE/filesystem helper and emit an fsthread IoErr=205 warning.
+	// ExtFS still reports host modification times correctly via stat().
+
 	// Open Finder info file
 	int fd = open_finf(path, O_RDWR);
 	if (fd < 0)

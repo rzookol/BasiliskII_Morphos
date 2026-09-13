@@ -39,7 +39,25 @@ extern struct Catalog *catalog;
 
 CONST_STRPTR GetLocaleString(LONG id)
 {
-	return GetCatalogStr(catalog, id, CatCompArray[id].cca_Str);
+	CONST_STRPTR fallback = "";
+	const ULONG count = sizeof(CatCompArray) / sizeof(CatCompArray[0]);
+
+	/* CatComp IDs are normally dense, but do not assume that forever. */
+	if (id >= 0 && (ULONG)id < count && CatCompArray[id].cca_ID == id)
+		fallback = CatCompArray[id].cca_Str;
+	else
+	{
+		for (ULONG i = 0; i < count; ++i)
+		{
+			if (CatCompArray[i].cca_ID == id)
+			{
+				fallback = CatCompArray[i].cca_Str;
+				break;
+			}
+		}
+	}
+
+	return GetCatalogStr(catalog, id, fallback);
 }
 
 /**********************************************************************
@@ -138,6 +156,20 @@ Object *MakeCheck(LONG id, Object **ch_obj)
 	}
 
 	return (obj);
+}
+
+/**********************************************************************
+	MakeCheckmark
+**********************************************************************/
+
+Object *MakeCheckmark(LONG id)
+{
+	Object *obj = MUI_MakeObject(MUIO_Checkmark, (IPTR)GetLocaleString(id));
+
+	if (obj)
+		SetAttrs(obj, MUIA_CycleChain, 1, TAG_DONE);
+
+	return obj;
 }
 
 /**********************************************************************

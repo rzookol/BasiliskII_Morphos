@@ -906,6 +906,16 @@ int16 CDROMStatus(uint32 pb, uint32 dce)
 			}
 			return noErr;
 		}
+
+		case 97: {	// WhoIsThere
+			uint8 drives_present = 0;
+			for (DriveInfo *d = first_drive_info; d != NULL; d = d->next) {
+				if (d->num <= 6)
+					drives_present |= (1 << d->num);
+			}
+			WriteMacInt8(pb + csParam + 1, drives_present);
+			return noErr;
+		}
 	}
 
 	// Drive valid?
@@ -956,7 +966,7 @@ int16 CDROMStatus(uint32 pb, uint32 dce)
 
 		case 121:		// Get CD features
 			WriteMacInt16(pb + csParam, 0x0200);	// 300 KB/s
-			WriteMacInt16(pb + csParam, 0x0300);	// SCSI-2, stereo
+			WriteMacInt16(pb + csParam + 2, 0x0c00);	// SCSI-2, stereo
 			return noErr;
 
 		default:

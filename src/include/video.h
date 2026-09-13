@@ -58,4 +58,9 @@ extern void VideoRefresh(void);
 
 extern void video_set_palette(uint8 *pal);
 
+#ifdef __MORPHOS__
+extern void video_set_mode(int mode);
+extern void video_set_gamma(const uint8 *red, const uint8 *green, const uint8 *blue);
+#endif
+
 #endif

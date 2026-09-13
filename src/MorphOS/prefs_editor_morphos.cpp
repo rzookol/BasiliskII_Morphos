@@ -89,6 +89,24 @@ STATIC CONST CONST_STRPTR ModelNames[] =
 	NULL
 };
 
+STATIC CONST CONST_STRPTR CPUProfileNames[] =
+{
+	"68020",
+	"68020 + FPU",
+	"68030",
+	"68030 + FPU",
+	"68040 + FPU",
+	NULL
+};
+
+STATIC CONST CONST_STRPTR GfxDepthNames[] =
+{
+	"8 bit",
+	"16 bit",
+	"32 bit",
+	NULL
+};
+
 STATIC CONST_STRPTR VolumeTypes[] =
 {
 	(CONST_STRPTR)MSG_PREFS_VOLUMETYPE_FILE_GAD,
@@ -146,7 +164,7 @@ static void read_volumes_settings(Object *str_cdromdev, Object *str_cdromunit, O
 	if (*str)
 	{
 		char buf[MAX_STRING_LENGTH + 128];
-		sprintf(buf, "/dev/%s/%ld/%d/%d/%d/%d", str, getv(str_cdromunit, MUIA_String_Integer), 0, 0, 0, 2048);
+		snprintf(buf, sizeof(buf), "/dev/%s/%ld/%d/%d/%d/%d", str, getv(str_cdromunit, MUIA_String_Integer), 0, 0, 0, 2048);
 		PrefsReplaceString("cdrom", buf);
 	}
 	else
@@ -172,13 +190,13 @@ static void read_scsi_settings(Object **str_scsidev, Object **str_scsiunit)
 		CONST_STRPTR scsi_dev;
 		char prefs_name[16];
 
-		sprintf(prefs_name, "scsi%d", i);
+		snprintf(prefs_name, sizeof(prefs_name), "scsi%d", i);
 		scsi_dev = (CONST_STRPTR)getv(str_scsidev[i], MUIA_String_Contents);
 
 		if (*scsi_dev)
 		{
 			char str[MAX_STRING_LENGTH + 32];
-			sprintf(str, "%s/%ld", scsi_dev, getv(str_scsiunit[i], MUIA_String_Integer));
+			snprintf(str, sizeof(str), "%s/%ld", scsi_dev, getv(str_scsiunit[i], MUIA_String_Integer));
 			PrefsReplaceString(prefs_name, str);
 		}
 		else
@@ -197,7 +215,7 @@ static void make_serial_prefs(const char *prefs, Object *str_name, Object *str_u
 	if (*dev)
 	{
 		char str[MAX_STRING_LENGTH + 32];
-		sprintf(str, "%s%s/%ld", getv(ch_ispar, MUIA_Selected) ? "*" : "", dev, getv(str_unit, MUIA_String_Integer));
+		snprintf(str, sizeof(str), "%s%s/%ld", getv(ch_ispar, MUIA_Selected) ? "*" : "", dev, getv(str_unit, MUIA_String_Integer));
 		PrefsReplaceString(prefs, str);
 	}
 	else
@@ -228,18 +246,59 @@ static void read_serial_settings(Object *str_serdev, Object *str_serunit, Object
 	}
 }
 
-static void read_emulation_settings(Object *str_width, Object *str_height, Object *ch_fullscreen, Object *ch_8bitgfx, Object *sound, Object *slider, Object *model, Object *romfile, Object *sl_frameskip)
+static void read_emulation_settings(Object *str_width, Object *str_height, Object *ch_fullscreen, Object *cy_gfxdepth, Object *ch_gfxaccel, Object *ch_overlay, Object *ch_cursor, Object *ch_altivec, Object *sound, Object *slider, Object *model, Object *cpu_profile, Object *romfile, Object *sl_frameskip)
 {
 	CONST_STRPTR str;
 	char buf[128];
+	LONG cpu = 3;
+	bool fpu = false;
 
-	sprintf(buf, "win/%ld/%ld", getv(str_width, MUIA_String_Integer), getv(str_height, MUIA_String_Integer));
+	snprintf(buf, sizeof(buf), "win/%ld/%ld", getv(str_width, MUIA_String_Integer), getv(str_height, MUIA_String_Integer));
 	PrefsReplaceString("screen", buf);
 	PrefsReplaceBool("fullscreen", getv(ch_fullscreen, MUIA_Selected));
-	PrefsReplaceBool("8bitgfx", getv(ch_8bitgfx, MUIA_Selected));
+	LONG depth_index = getv(cy_gfxdepth, MUIA_Cycle_Active);
+	LONG gfxdepth = depth_index == 0 ? 8 : depth_index == 1 ? 16 : 32;
+	PrefsReplaceInt32("gfxdepth", gfxdepth);
+	PrefsReplaceBool("8bitgfx", gfxdepth == 8); // backwards compatibility
+	PrefsReplaceBool("gfxaccel", getv(ch_gfxaccel, MUIA_Selected));
+	PrefsReplaceBool("rgb24overlay", getv(ch_overlay, MUIA_Selected));
+	PrefsReplaceBool("hardwarecursor", getv(ch_cursor, MUIA_Selected));
+	PrefsReplaceBool("altivecgfx", getv(ch_altivec, MUIA_Selected));
 	PrefsReplaceBool("nosound", getv(sound, MUIA_Selected));
 	PrefsReplaceInt32("ramsize", ramsizes[getv(slider, MUIA_Slider_Level)] << 20);
 	PrefsReplaceInt32("modelid", getv(model, MUIA_Cycle_Active) == 0 ? 5 : 14);
+
+	switch (getv(cpu_profile, MUIA_Cycle_Active))
+	{
+		case 0:
+			cpu = 2;
+			fpu = false;
+			break;
+
+		case 1:
+			cpu = 2;
+			fpu = true;
+			break;
+
+		case 2:
+			cpu = 3;
+			fpu = false;
+			break;
+
+		case 3:
+			cpu = 3;
+			fpu = true;
+			break;
+
+		case 4:
+		default:
+			cpu = 4;
+			fpu = true;
+			break;
+	}
+
+	PrefsReplaceInt32("cpu", cpu);
+	PrefsReplaceBool("fpu", fpu);
 	PrefsReplaceInt32("frameskip", getv(sl_frameskip, MUIA_Slider_Level));
 
 	str = (CONST_STRPTR)getv(romfile, MUIA_String_Contents);
@@ -273,7 +332,7 @@ static void set_volumes_settings(Object *lv_volumes, Object *str_cdromdev, Objec
 		cdrom_unit		= 0;
 		cdrom_name[0]	= 0;
 
-		sscanf(str, "/dev/%[^/]/%ld/%ld/%ld/%ld/%ld", cdrom_name, &cdrom_unit, &cdrom_dummy, &cdrom_dummy, &cdrom_dummy, &cdrom_dummy);
+		sscanf(str, "/dev/%255[^/]/%lu/%lu/%lu/%lu/%lu", cdrom_name, &cdrom_unit, &cdrom_dummy, &cdrom_dummy, &cdrom_dummy, &cdrom_dummy);
 
 		SetAttrs(str_cdromdev, MUIA_String_Contents, &cdrom_name, TAG_DONE);
 		SetAttrs(str_cdromunit, MUIA_String_Integer, cdrom_unit, TAG_DONE);
@@ -295,7 +354,7 @@ static void set_scsi_settings(Object **str_scsidev, Object **str_scsiunit)
 	for (int i=0; i<7; i++)
 	{
 		char prefs_name[16];
-		sprintf(prefs_name, "scsi%d", i);
+		snprintf(prefs_name, sizeof(prefs_name), "scsi%d", i);
 		const char *str = PrefsFindString(prefs_name);
 
 		if (str)
@@ -306,7 +365,7 @@ static void set_scsi_settings(Object **str_scsidev, Object **str_scsiunit)
 			scsi_dev[0] = 0;
 			scsi_unit = 0;
 
-			sscanf(str, "%[^/]/%ld", scsi_dev, &scsi_unit);
+			sscanf(str, "%255[^/]/%lu", scsi_dev, &scsi_unit);
 
 			SetAttrs(str_scsidev[i], MUIA_String_Contents, scsi_dev, TAG_DONE);
 			SetAttrs(str_scsiunit[i], MUIA_String_Integer, scsi_unit, TAG_DONE);
@@ -331,7 +390,7 @@ static void parse_ser_prefs(const char *prefs, Object *str_devname, Object *str_
 			ispar = true;
 			str++;
 		}
-		sscanf(str, "%[^/]/%ld", dev, &unit);
+		sscanf(str, "%255[^/]/%ld", dev, &unit);
 
 		SetAttrs(str_devname, MUIA_String_Contents, &dev, TAG_DONE);
 		SetAttrs(str_unit, MUIA_String_Integer, unit, TAG_DONE);
@@ -378,11 +437,12 @@ static void set_serial_settings(Object *str_serdev, Object *str_serunit, Object 
 	}
 }
 
-static void set_emulation_settings(Object *str_width, Object *str_height, Object *ch_fullscreen, Object *ch_8bitgfx, Object *sound, Object *slider, Object *model, Object *romfile, Object *sl_frameskip)
+static void set_emulation_settings(Object *str_width, Object *str_height, Object *ch_fullscreen, Object *cy_gfxdepth, Object *ch_gfxaccel, Object *ch_overlay, Object *ch_cursor, Object *ch_altivec, Object *sound, Object *slider, Object *model, Object *cpu_profile, Object *romfile, Object *sl_frameskip)
 {
 	CONST_STRPTR str;
 	ULONG ramsize_mb, value, i, width, height;
-	LONG	id;
+	LONG	id, cpu, cpu_profile_index;
+	bool fpu;
 
 	// Window width and height
 
@@ -398,7 +458,13 @@ static void set_emulation_settings(Object *str_width, Object *str_height, Object
 	SetAttrs(str_width, MUIA_String_Integer, width, TAG_DONE);
 	SetAttrs(str_height, MUIA_String_Integer, height, TAG_DONE);
 	SetAttrs(ch_fullscreen, MUIA_Selected, PrefsFindBool("fullscreen"), TAG_DONE);
-	SetAttrs(ch_8bitgfx, MUIA_Selected, PrefsFindBool("8bitgfx"), TAG_DONE);
+	LONG gfxdepth = PrefsFindInt32("gfxdepth");
+	if (gfxdepth != 8 && gfxdepth != 16 && gfxdepth != 32) gfxdepth = PrefsFindBool("8bitgfx") ? 8 : 32;
+	SetAttrs(cy_gfxdepth, MUIA_Cycle_Active, gfxdepth == 8 ? 0 : gfxdepth == 16 ? 1 : 2, TAG_DONE);
+	SetAttrs(ch_gfxaccel, MUIA_Selected, PrefsFindBool("gfxaccel"), TAG_DONE);
+	SetAttrs(ch_overlay, MUIA_Selected, PrefsFindBool("rgb24overlay"), TAG_DONE);
+	SetAttrs(ch_cursor, MUIA_Selected, PrefsFindBool("hardwarecursor"), TAG_DONE);
+	SetAttrs(ch_altivec, MUIA_Selected, PrefsFindBool("altivecgfx"), TAG_DONE);
 	SetAttrs(sl_frameskip, MUIA_Slider_Level, PrefsFindInt32("frameskip"), TAG_DONE);
 
 	// Sound
@@ -423,6 +489,29 @@ static void set_emulation_settings(Object *str_width, Object *str_height, Object
 
 	id = PrefsFindInt32("modelid");
 	SetAttrs(model, MUIA_Cycle_Active, id == 5 ? 0 : 1, TAG_DONE);	// id is 5 or 14
+
+	// CPU / FPU
+
+	cpu = PrefsFindInt32("cpu");
+	fpu = PrefsFindBool("fpu");
+	cpu_profile_index = 2;
+
+	switch (cpu)
+	{
+		case 2:
+			cpu_profile_index = fpu ? 1 : 0;
+			break;
+
+		case 3:
+			cpu_profile_index = fpu ? 3 : 2;
+			break;
+
+		case 4:
+			cpu_profile_index = 4;
+			break;
+	}
+
+	SetAttrs(cpu_profile, MUIA_Cycle_Active, cpu_profile_index, TAG_DONE);
 
 	// ROM
 
@@ -717,11 +806,11 @@ static void update_volume(Object *prefswin, Object *subwin, Object *lv_volumes, 
 
 	if (is_device)
 	{
-		sprintf(str, "%s/dev/%s/%ld/%ld/%ld/%ld/%ld", read_only ? "*" : "", (STRPTR)getv(tx_vol_device, MUIA_String_Contents), getv(str_vol_unit, MUIA_String_Integer), getv(str_vol_flags, MUIA_String_Integer), getv(str_vol_start, MUIA_String_Integer), getv(str_vol_size, MUIA_String_Integer), getv(str_vol_bsize, MUIA_String_Integer));
+		snprintf(str, sizeof(str), "%s/dev/%s/%ld/%ld/%ld/%ld/%ld", read_only ? "*" : "", (STRPTR)getv(tx_vol_device, MUIA_String_Contents), getv(str_vol_unit, MUIA_String_Integer), getv(str_vol_flags, MUIA_String_Integer), getv(str_vol_start, MUIA_String_Integer), getv(str_vol_size, MUIA_String_Integer), getv(str_vol_bsize, MUIA_String_Integer));
 	}
 	else
 	{
-		sprintf(str, "%s%s", read_only ? "*" : "", (STRPTR)getv(str_vol_hardfile, MUIA_String_Contents));
+		snprintf(str, sizeof(str), "%s%s", read_only ? "*" : "", (STRPTR)getv(str_vol_hardfile, MUIA_String_Contents));
 	}
 
 	if (add_volume)
@@ -782,8 +871,8 @@ static VOID ChoosePartitionCloseHook(APTR hook, Object *list, APTR str)
 	if (part)
 	{
 		SetAttrs(str_vol_flags, MUIA_String_Integer, part->flags, TAG_DONE);
-		SetAttrs(str_vol_start, MUIA_String_Integer, part->lowcyl, TAG_DONE);
-		SetAttrs(str_vol_size, MUIA_String_Integer, part->highcyl - part->lowcyl + 1, TAG_DONE);
+		SetAttrs(str_vol_start, MUIA_String_Integer, part->start_block, TAG_DONE);
+		SetAttrs(str_vol_size, MUIA_String_Integer, part->block_count, TAG_DONE);
 		SetAttrs(str_vol_bsize, MUIA_String_Integer, part->blocksize, TAG_DONE);
 	}
 }
@@ -802,7 +891,8 @@ static IPTR ChoosePartitionConstructHook(APTR hook, APTR pool, struct PartInfo *
 
 STATIC VOID ChoosePartitionDestructHook(APTR hook, APTR pool, struct PartInfo *part)
 {
-	FreeMem(part, sizeof(*part));
+	if (part)
+		FreeMem(part, sizeof(*part));
 }
 
 STATIC ULONG ChoosePartitionDisplayHook(APTR hook, STRPTR *entries, struct PartInfo *part)
@@ -861,7 +951,7 @@ static Object *add_edit_volume(Object *prefswin, Object *lv_volumes, ULONG addin
 		if (strstr(str, "/dev/") == str)
 		{
 			is_device = TRUE;
-			sscanf(str, "/dev/%[^/]/%ld/%ld/%ld/%ld/%ld", dev_name, &dev_unit, &dev_flags, &dev_start, &dev_size, &dev_bsize);
+			sscanf(str, "/dev/%255[^/]/%ld/%ld/%ld/%ld/%ld", dev_name, &dev_unit, &dev_flags, &dev_start, &dev_size, &dev_bsize);
 		}
 		else
 		{
@@ -1038,8 +1128,8 @@ bool RunPrefs(void)
 	Object *win, *bt_start, *bt_quit, *bt_adddisk, *bt_editdisk, *bt_removedisk;
 	Object *str_width, *str_height, *str_serdev, *str_serunit, *str_pardev, *str_parunit, *str_ethername, *str_etherunit;
 	Object *str_cdromdev, *str_cdromunit;
-	Object *ch_sound, *ch_8bitgfx, *ch_fullscreen, *ch_isserpar, *ch_isparpar, *ch_bootfromcd, *ch_nocdrom;
-	Object *sl_ramsize, *cy_model, *str_romfile, *str_extfs, *sl_frameskip;
+	Object *ch_sound, *ch_fullscreen, *ch_gfxaccel, *ch_overlay, *ch_cursor, *ch_altivec, *ch_isserpar, *ch_isparpar, *ch_bootfromcd, *ch_nocdrom;
+	Object *sl_ramsize, *cy_model, *cy_cpu, *cy_gfxdepth, *str_romfile, *str_extfs, *sl_frameskip;
 	Object *lv_volumes;
 	bool retval;
 
@@ -1175,20 +1265,34 @@ bool RunPrefs(void)
 					End,
 
 					Child, VGroup,
-						Child, ColGroup(2),
+						Child, VGroup,
 							GroupFrame,
 							MUIA_Background, MUII_GroupBack,
 							MUIA_FrameTitle, _L(MSG_GRAPHICS),
-							Child, MakeLabel(MSG_PREFS_GFX_WIDTH_GAD),
-							Child, str_width = MakeInteger(MSG_PREFS_GFX_WIDTH_GAD, 8),
-							Child, MakeLabel(MSG_PREFS_GFX_HEIGHT_GAD),
-							Child, str_height = MakeInteger(MSG_PREFS_GFX_HEIGHT_GAD, 8),
-							Child, MakeRect(0),
-							Child, MakeCheck(MSG_PREFS_GFX_FULLSCREEN_GAD, &ch_fullscreen),
-							Child, MakeRect(0),
-							Child, MakeCheck(MSG_PREFS_GFX_8BIT_GAD, &ch_8bitgfx),
-							Child, MakeLabel(MSG_PREFS_GFX_FRAMESKIP_GAD),
-							Child, sl_frameskip = MakeSlider(MSG_PREFS_GFX_FRAMESKIP_GAD, 0, 7),
+							Child, ColGroup(2),
+								Child, MakeLabel(MSG_PREFS_GFX_WIDTH_GAD),
+								Child, str_width = MakeInteger(MSG_PREFS_GFX_WIDTH_GAD, 8),
+								Child, MakeLabel(MSG_PREFS_GFX_HEIGHT_GAD),
+								Child, str_height = MakeInteger(MSG_PREFS_GFX_HEIGHT_GAD, 8),
+								Child, MakeRect(0),
+								Child, MakeCheck(MSG_PREFS_GFX_FULLSCREEN_GAD, &ch_fullscreen),
+								Child, MakeLabel(MSG_PREFS_GFX_DEPTH_GAD),
+								Child, cy_gfxdepth = MakeCycle(MSG_PREFS_GFX_DEPTH_GAD, GfxDepthNames),
+							End,
+
+							/* Keep the optional graphics switches as full-width rows, just like
+							 * the Disable sound control.  This puts the checkmark on the left,
+							 * its label immediately after it, and lets the row consume whatever
+							 * horizontal space the parent group gives it. */
+							Child, MakeCheck(MSG_PREFS_GFX_ACCEL_GAD, &ch_gfxaccel),
+							Child, MakeCheck(MSG_PREFS_GFX_OVERLAY_GAD, &ch_overlay),
+							Child, MakeCheck(MSG_PREFS_GFX_HWCURSOR_GAD, &ch_cursor),
+							Child, MakeCheck(MSG_PREFS_GFX_ALTIVEC_GAD, &ch_altivec),
+
+							Child, ColGroup(2),
+								Child, MakeLabel(MSG_PREFS_GFX_FRAMESKIP_GAD),
+								Child, sl_frameskip = MakeSlider(MSG_PREFS_GFX_FRAMESKIP_GAD, 0, 7),
+							End,
 						End,
 						Child, VGroup,
 							GroupFrame,
@@ -1205,6 +1309,8 @@ bool RunPrefs(void)
 							Child, sl_ramsize		= (Object *)NewObject(SliderClass->mcc_Class, NULL, MUIA_Numeric_Max, 6, TAG_DONE),
 							Child, MakeLabel(MSG_PREFS_SYSTEM_MODEL_GAD),
 							Child, cy_model		= MakeCycle(MSG_PREFS_SYSTEM_MODEL_GAD, ModelNames),
+							Child, MakeLabel(MSG_PREFS_CPU_FPU_GAD),
+							Child, cy_cpu		= MakeCycle(MSG_PREFS_CPU_FPU_GAD, CPUProfileNames),
 							Child, MakeLabel(MSG_PREFS_SYSTEM_ROM_GAD),
 							Child, MakePopFile(MSG_PREFS_SYSTEM_ROM_GAD, 1024, &str_romfile),
 						End,
@@ -1223,8 +1329,8 @@ bool RunPrefs(void)
 
 	if (win)
 	{
-		Object *win_volume = win_volume;
-		ULONG add_volume = add_volume, signals = 0;
+		Object *win_volume = NULL;
+		ULONG add_volume = 0, signals = 0;
 
 		DoMethod(app, OM_ADDMEMBER, win);
 
@@ -1246,7 +1352,8 @@ bool RunPrefs(void)
 		set_volumes_settings(lv_volumes, str_cdromdev, str_cdromunit, ch_bootfromcd, ch_nocdrom, str_extfs);
 		set_scsi_settings(&str_scsidev[0], &str_scsiunit[0]);
 		set_serial_settings(str_serdev, str_serunit, ch_isserpar, str_pardev, str_parunit, ch_isparpar, str_ethername, str_etherunit);
-		set_emulation_settings(str_width, str_height, ch_fullscreen, ch_8bitgfx, ch_sound, sl_ramsize, cy_model, str_romfile, sl_frameskip);
+		set_emulation_settings(str_width, str_height, ch_fullscreen, cy_gfxdepth, ch_gfxaccel, ch_overlay, ch_cursor, ch_altivec, ch_sound, sl_ramsize, cy_model, cy_cpu, str_romfile, sl_frameskip);
+		SetAttrs(cy_cpu, MUIA_CycleChain, 1, TAG_DONE);
 
 		SetAttrs(win, MUIA_Window_Open, TRUE, TAG_DONE);
 
@@ -1309,7 +1416,7 @@ done:
 			read_volumes_settings(str_cdromdev, str_cdromunit, ch_bootfromcd, ch_nocdrom, str_extfs);
 			read_scsi_settings(&str_scsidev[0], &str_scsiunit[0]);
 			read_serial_settings(str_serdev, str_serunit, ch_isserpar, str_pardev, str_parunit, ch_isparpar, str_ethername, str_etherunit);
-			read_emulation_settings(str_width, str_height, ch_fullscreen, ch_8bitgfx, ch_sound, sl_ramsize, cy_model, str_romfile, sl_frameskip);
+			read_emulation_settings(str_width, str_height, ch_fullscreen, cy_gfxdepth, ch_gfxaccel, ch_overlay, ch_cursor, ch_altivec, ch_sound, sl_ramsize, cy_model, cy_cpu, str_romfile, sl_frameskip);
 			SavePrefs();
 		}
 	}

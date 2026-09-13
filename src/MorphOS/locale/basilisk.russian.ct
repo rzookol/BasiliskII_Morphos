@@ -300,8 +300,8 @@ Q\0Выход
 ; Q\0Quit
 ;
 MSG_AUTHOR_INFORMATION
-\ecBasilisk II 1.0 автор Christian Bauer\n© Copyright 1997-2001\nРаспространяется под лицензией GPL
-; \33cBasilisk II 1.0 by Christian Bauer\n© Copyright 1997-2001\nDistribtion under General Public License (GPL)
+\ecBasilisk II 1.3 автор Christian Bauer\n© Copyright 1997-2001\nРаспространяется под лицензией GPL
+; \33cBasilisk II 1.3 by Christian Bauer\n© Copyright 1997-2001\nDistribtion under General Public License (GPL)
 ;
 MSG_PORT_INFORMATION
 MorphOS-порт Ilkka Lehtoranta, 2005-2007
@@ -314,4 +314,8 @@ MSG_GFX_INFORMATION
 MSG_DESCRIPTION
 Эмулятор 68k Macintosh
 ; 68k MacIntosh emulator
+;
+MSG_PREFS_CPU_FPU_GAD
+CPU / FPU
+; CPU / FPU
 ;
